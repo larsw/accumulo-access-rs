@@ -1,0 +1,18 @@
+[package]
+name = "accumulo-access"
+version = "0.1.0"
+edition = "2021"
+authors = ["Lars Wilhelmsen <sral-backwards@sral.org>"]
+description = "Rust API for parsing and evaluating Accumulo Access Expressions"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/larsw/accumulo-access-rs"
+readme = "README.md"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# no dependencies!
+
+[profile.release]
+opt-level = 3
