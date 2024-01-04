@@ -1,6 +1,6 @@
 [package]
 name = "accumulo-access"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Lars Wilhelmsen <sral-backwards@sral.org>"]
 description = "Rust API for parsing and evaluating Accumulo Access Expressions"
