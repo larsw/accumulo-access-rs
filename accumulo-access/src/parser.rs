@@ -41,12 +41,12 @@ pub enum AuthorizationExpression {
 impl AuthorizationExpression {
     pub fn evaluate(&self, authorizations: &HashSet<String>) -> bool {
         match self {
-            AuthorizationExpression::And(nodes) => {
-                nodes.iter().all(|node| node.evaluate(authorizations))
-            }
-            AuthorizationExpression::Or(nodes) => {
-                nodes.iter().any(|node| node.evaluate(authorizations))
-            }
+            AuthorizationExpression::And(nodes) =>
+                nodes.iter().all(|node| node.evaluate(authorizations)),
+
+            AuthorizationExpression::Or(nodes) =>
+                nodes.iter().any(|node| node.evaluate(authorizations)),
+
             AuthorizationExpression::AccessToken(token) => authorizations.contains(token),
         }
     }
@@ -126,7 +126,7 @@ impl Scope {
         if self.labels.is_empty() {
             return Err(ParserError::EmptyScope);
         }
-        if self.labels.len() == 1 {
+        if self.labels.len() == 1 && self.tokens.is_empty() {
             return Ok(AuthorizationExpression::AccessToken(
                 self.labels.pop().unwrap(),
             ));
@@ -225,5 +225,33 @@ mod tests {
         authorized_tokens.insert(String::from("label 🕺"));
 
         assert_eq!(ast.evaluate(&authorized_tokens), true);
+    }
+
+    #[test]
+    fn test_check_authorization2() {
+        let input = "label1 & label2 & (label4 | label5)";
+        let lexer: Lexer<'_> = Lexer::new(input);
+        let mut parser = Parser::new(lexer);
+        let ast = parser.parse().unwrap();
+        let mut authorized_tokens = HashSet::new();
+        authorized_tokens.insert(String::from("label1"));
+        authorized_tokens.insert(String::from("label2"));
+
+        println!("{:?}", ast);
+
+        assert_eq!(ast.evaluate(&authorized_tokens), false);
+    }
+
+    #[test]
+    fn test_check_authorization3() {
+        let input = "label1 & (label3 | label4)";
+        let lexer: Lexer<'_> = Lexer::new(input);
+        let mut parser = Parser::new(lexer);
+        let ast = parser.parse().unwrap();
+        let mut authorized_tokens = HashSet::new();
+        authorized_tokens.insert(String::from("label1"));
+        authorized_tokens.insert(String::from("label2"));
+
+        assert_eq!(ast.evaluate(&authorized_tokens), false);
     }
 }
