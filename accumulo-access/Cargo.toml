@@ -8,12 +8,18 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/larsw/accumulo-access-rs"
 readme = "README.md"
 
+[features]
+default = ["caching"]
+caching = ["dep:cached"]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+cached = { version = "0.47.0", optional = true, features = ["ahash"] }
+
+[dev-dependencies]
 rstest = "0.18.2"
-# no dependencies!
 
 [profile.release]
 opt-level = 3
