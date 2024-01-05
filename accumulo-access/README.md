@@ -10,7 +10,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-accumulo-access-rs = "0.1.0"
+accumulo-access = "0.1"
 ```
 
 ## Example
@@ -42,4 +42,5 @@ fn main() {
 
 ## License
 
-Licensed under the Apache License, Version 2.0 ([LICENSE](accumulo-access/LICENSE) or http://www.apache.org/licenses/LICENSE-2.0)
+Licensed under both the the Apache License, Version 2.0 ([LICENSE_APACHE](accumulo-access/LICENSE_APACHE) or http://www.apache.org/licenses/LICENSE-2.0) and the MIT License [LICENSE_MIT](accumulo-access/LICENSE_MIT).
+

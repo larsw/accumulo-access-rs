@@ -1,6 +1,7 @@
 // Copyright 2024 Lars Wilhelmsen <sral-backwards@sral.org>. All rights reserved.
 // Use of this source code is governed by the MIT or Apache-2.0 license that can be found in the LICENSE-MIT or LICENSE-APACHE files.
 
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use crate::lexer::{Lexer, Token};
 use crate::ParserError::LexerError;
@@ -31,12 +32,41 @@ impl std::fmt::Display for ParserError {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum AuthorizationExpression {
     And(Vec<AuthorizationExpression>),
     Or(Vec<AuthorizationExpression>),
     AccessToken(String),
 }
+
+impl Ord for AuthorizationExpression {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (AuthorizationExpression::And(_), AuthorizationExpression::Or(_)) => Ordering::Less,
+            (AuthorizationExpression::Or(_), AuthorizationExpression::And(_)) => Ordering::Greater,
+            (AuthorizationExpression::And(a), AuthorizationExpression::And(b)) => a.cmp(b),
+            (AuthorizationExpression::Or(a), AuthorizationExpression::Or(b)) => a.cmp(b),
+            (AuthorizationExpression::AccessToken(a), AuthorizationExpression::AccessToken(b)) => a.cmp(b),
+            (AuthorizationExpression::AccessToken(_), _) => Ordering::Greater,
+            (_, AuthorizationExpression::AccessToken(_)) => Ordering::Less,
+        }
+    }
+}
+
+impl PartialOrd for AuthorizationExpression {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for AuthorizationExpression {}
+
+impl PartialEq for AuthorizationExpression {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
 
 impl AuthorizationExpression {
     pub fn evaluate(&self, authorizations: &HashSet<String>) -> bool {
@@ -78,26 +108,47 @@ impl AuthorizationExpression {
             AuthorizationExpression::AccessToken(token) => format!("\"{}\"", token),
         }
     }
+
+    /// sort and normalize (remove duplicates) in the expression tree.
+    pub fn normalize(&mut self) {
+        match self {
+            AuthorizationExpression::And(nodes) => {
+                nodes.sort();
+                nodes.dedup();
+                for node in nodes {
+                    node.normalize();
+                }
+            }
+            AuthorizationExpression::Or(nodes) => {
+                nodes.sort();
+                nodes.dedup();
+                for node in nodes {
+                    node.normalize();
+                }
+            }
+            AuthorizationExpression::AccessToken(_) => {}
+        }
+    }
 }
 
 #[derive(Debug)]
 struct Scope {
-    tokens: Vec<AuthorizationExpression>,
+    nodes: Vec<AuthorizationExpression>,
     labels: Vec<String>,
-    current_operator: Option<Token>,
+    operator: Option<Token>,
 }
 
 impl Scope {
     fn new() -> Self {
         Scope {
-            tokens: Vec::new(),
+            nodes: Vec::new(),
             labels: Vec::new(),
-            current_operator: None,
+            operator: None,
         }
     }
 
     fn add_node(&mut self, token: AuthorizationExpression) {
-        self.tokens.push(token);
+        self.nodes.push(token);
     }
 
     fn add_label(&mut self, label: String) {
@@ -107,41 +158,45 @@ impl Scope {
     fn set_operator(&mut self, operator: &Token) -> Result<(), ParserError> {
         match operator {
             Token::And => {
-                if let Some(Token::Or) = self.current_operator {
+                if let Some(Token::Or) = self.operator {
                     return Err(ParserError::MixingOperators);
                 }
             }
             Token::Or => {
-                if let Some(Token::And) = self.current_operator {
+                if let Some(Token::And) = self.operator {
                     return Err(ParserError::MixingOperators);
                 }
             }
             _ => return Err(ParserError::UnexpectedToken(operator.clone())),
         }
-        self.current_operator = Some(operator.clone());
+        self.operator = Some(operator.clone());
         Ok(())
     }
 
     fn build(&mut self) -> Result<AuthorizationExpression, ParserError> {
-        if self.labels.is_empty() {
-            return Err(ParserError::EmptyScope);
-        }
-        if self.labels.len() == 1 && self.tokens.is_empty() {
+        // if self.labels.is_empty() {
+        //     return Err(ParserError::EmptyScope);
+        // }
+        if self.labels.len() == 1 && self.nodes.is_empty() {
             return Ok(AuthorizationExpression::AccessToken(
                 self.labels.pop().unwrap(),
             ));
         }
-        if self.current_operator.is_none() {
+        // if it is a scope wrapping a single node, return the node
+        if self.nodes.len() == 1 && self.labels.is_empty() {
+            return Ok(self.nodes.pop().unwrap());
+        }
+        if self.operator.is_none() {
             return Err(ParserError::MissingOperator);
         }
-        let operator = self.current_operator.take().unwrap();
-        let mut nodes = Vec::with_capacity(self.labels.len() + self.tokens.len());
+        let operator = self.operator.take().unwrap();
+        let mut nodes = Vec::with_capacity(self.labels.len() + self.nodes.len());
 
         while let Some(label) = self.labels.pop() {
             nodes.push(AuthorizationExpression::AccessToken(label));
         }
 
-        while let Some(token) = self.tokens.pop() {
+        while let Some(token) = self.nodes.pop() {
             nodes.push(token);
         }
         match operator {
@@ -205,53 +260,5 @@ impl<'a> Parser<'a> {
             }
         }
         scope.build()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashSet;
-
-    #[test]
-    fn test_check_authorization() {
-        let input = "label1 & label5 & (label3 | label8 | \"label 🕺\")";
-        let lexer: Lexer<'_> = Lexer::new(input);
-        let mut parser = Parser::new(lexer);
-        let ast = parser.parse().unwrap();
-        let mut authorized_tokens = HashSet::new();
-        authorized_tokens.insert(String::from("label1"));
-        authorized_tokens.insert(String::from("label5"));
-        authorized_tokens.insert(String::from("label 🕺"));
-
-        assert_eq!(ast.evaluate(&authorized_tokens), true);
-    }
-
-    #[test]
-    fn test_check_authorization2() {
-        let input = "label1 & label2 & (label4 | label5)";
-        let lexer: Lexer<'_> = Lexer::new(input);
-        let mut parser = Parser::new(lexer);
-        let ast = parser.parse().unwrap();
-        let mut authorized_tokens = HashSet::new();
-        authorized_tokens.insert(String::from("label1"));
-        authorized_tokens.insert(String::from("label2"));
-
-        println!("{:?}", ast);
-
-        assert_eq!(ast.evaluate(&authorized_tokens), false);
-    }
-
-    #[test]
-    fn test_check_authorization3() {
-        let input = "label1 & (label3 | label4)";
-        let lexer: Lexer<'_> = Lexer::new(input);
-        let mut parser = Parser::new(lexer);
-        let ast = parser.parse().unwrap();
-        let mut authorized_tokens = HashSet::new();
-        authorized_tokens.insert(String::from("label1"));
-        authorized_tokens.insert(String::from("label2"));
-
-        assert_eq!(ast.evaluate(&authorized_tokens), false);
     }
 }

@@ -52,20 +52,31 @@ pub fn check_authorization(expression: &str, tokens: &Vec<String>) -> Result<boo
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use super::*;
 
-    #[test]
-    fn test_check_authorization() {
-        let expression = "label1 | label5";
-        let tokens = &Vec::from([
-            String::from("label1"),
-            String::from("label5"),
-            String::from("label 🕺"),
-        ]);
-        let result = check_authorization(expression, tokens);
-        match result {
-            Ok(result) => assert_eq!(result, true),
-            Err(_) => panic!("Unexpected error"),
-        }
+    #[rstest]
+    #[case("label1", "label1", true)]
+    #[case("label1|label2", "label1", true)]
+    #[case("label1&label2", "label1", false)]
+    #[case("label1&label2", "label1,label2", true)]
+    #[case("label1&(label2 | label3)", "label1", false)]
+    #[case("label1&(label2 | label3)", "label1,label3", true)]
+    #[case("label1&(label2 | label3)", "label1,label2", true)]
+    #[case("(label2 | label3)", "label1", false)]
+    #[case("(label2 | label3)", "label2", true)]
+    #[case("(label2 & label3)", "label2", false)]
+    #[case("((label2 | label3))", "label2", true)]
+    #[case("((label2 & label3))", "label2", false)]
+    #[case("(((((label2 & label3)))))", "label2", false)]
+    fn test_check_authorization(#[case] expr: impl AsRef<str>, #[case] authorized_tokens: impl AsRef<str>, #[case] expected: bool) {
+        let authorized_tokens: Vec<String> = authorized_tokens.as_ref()
+            .to_owned()
+            .split(',')
+            .map(|s| s.to_string())
+            .collect();
+
+        let result = check_authorization(expr.as_ref(), &authorized_tokens).unwrap();
+        assert_eq!(result, expected);
     }
 }

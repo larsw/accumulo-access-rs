@@ -1,6 +1,6 @@
 [package]
 name = "accumulo-access"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Lars Wilhelmsen <sral-backwards@sral.org>"]
 description = "Rust API for parsing and evaluating Accumulo Access Expressions"
@@ -12,6 +12,7 @@ readme = "README.md"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+rstest = "0.18.2"
 # no dependencies!
 
 [profile.release]

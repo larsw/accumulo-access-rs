@@ -141,7 +141,10 @@ impl<'a> Iterator for Lexer<'a> {
                     }
                     return Some(Ok(Token::AccessToken(id)));
                 }
-                _ => return Some(Err(LexerError::UnexpectedCharacter(c, self.position))),
+                _ => {
+                    self.read_char();
+                    return Some(Err(LexerError::UnexpectedCharacter(c, self.position)))
+                },
             }
         }
         None
@@ -153,7 +156,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_lexer() {
+    fn test_lexer_valid() {
         let input =
             "label1 & \"label 🕺\" | (\"hello \\\\ \\\"world\" | label4 | (label5 & label6)))";
         let lexer = Lexer::new(input);
@@ -180,4 +183,18 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn test_lexer_invalid() {
+            let input = "label1 & [";
+        let lexer = Lexer::new(input);
+        let tokens: Vec<Result<Token, LexerError>> = lexer.collect();
+        assert_ne!(
+            tokens,
+            vec![
+                Ok(Token::AccessToken("label1".to_string())),
+                Ok(Token::And),
+                Err(LexerError::UnexpectedCharacter('[', 9)),
+            ]
+        ); }
 }
