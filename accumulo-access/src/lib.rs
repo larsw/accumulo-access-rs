@@ -50,6 +50,15 @@ pub fn check_authorization(expression: &str, tokens: &Vec<String>) -> Result<boo
     Ok(result)
 }
 
+#[cfg(feature = "caching")]
+mod caching {
+    use cached::*;
+
+    pub fn check_authorization(expression: &str, tokens: &Vec<String>) -> Result<bool, super::ParserError> {
+        super::check_authorization(expression, tokens)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
