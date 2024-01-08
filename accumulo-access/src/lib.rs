@@ -3,6 +3,8 @@
 
 mod lexer;
 mod parser;
+#[cfg(feature = "caching")]
+pub mod caching;
 
 pub use crate::lexer::Lexer;
 pub use crate::parser::Parser;
@@ -50,10 +52,18 @@ pub fn check_authorization(expression: &str, tokens: &Vec<String>) -> Result<boo
     Ok(result)
 }
 
+pub fn check_authorization_csv<'a>(
+    expression: String,
+    tokens: String,
+) -> Result<bool, ParserError> {
+    let tokens: Vec<String> = tokens.split(',').map(|s| s.to_string()).collect();
+    check_authorization(expression.as_str(), &tokens)
+}
+
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
     use super::*;
+    use rstest::rstest;
 
     #[rstest]
     #[case("label1", "label1", true)]
@@ -69,8 +79,13 @@ mod tests {
     #[case("((label2 | label3))", "label2", true)]
     #[case("((label2 & label3))", "label2", false)]
     #[case("(((((label2 & label3)))))", "label2", false)]
-    fn test_check_authorization(#[case] expr: impl AsRef<str>, #[case] authorized_tokens: impl AsRef<str>, #[case] expected: bool) {
-        let authorized_tokens: Vec<String> = authorized_tokens.as_ref()
+    fn test_check_authorization(
+        #[case] expr: impl AsRef<str>,
+        #[case] authorized_tokens: impl AsRef<str>,
+        #[case] expected: bool,
+    ) {
+        let authorized_tokens: Vec<String> = authorized_tokens
+            .as_ref()
             .to_owned()
             .split(',')
             .map(|s| s.to_string())
