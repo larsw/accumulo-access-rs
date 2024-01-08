@@ -5,9 +5,10 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use crate::lexer::{Lexer, Token};
 use crate::ParserError::LexerError;
+use thiserror::Error;
 
 /// `ParserError` is returned when the parser encounters an error.
-#[derive(Debug)]
+#[derive(Error, Debug, PartialEq, Clone)]
 pub enum ParserError {
     /// The scope (top-level or set of parentheses) is empty.
     EmptyScope,
