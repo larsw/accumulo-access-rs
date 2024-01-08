@@ -1,3 +1,6 @@
+// Copyright 2024 Lars Wilhelmsen <sral-backwards@sral.org>. All rights reserved.
+// Use of this source code is governed by the MIT or Apache-2.0 license that can be found in the LICENSE-MIT or LICENSE-APACHE files.
+
 use cached::{proc_macro::cached, Cached, SizedCache};
 
 #[cached(
