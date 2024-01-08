@@ -25,7 +25,6 @@ pub use crate::parser::ParserError;
 /// ```
 /// use accumulo_access::check_authorization;
 ///
-/// fn main() {
 ///    let expression = "label1 | label5";
 ///    let tokens = &Vec::from([
 ///      String::from("label1"),
@@ -39,20 +38,19 @@ pub use crate::parser::ParserError;
 ///     }
 ///     Err(_) => panic!("Unexpected error"),
 ///    };
-/// }
 /// ```
-pub fn check_authorization(expression: &str, tokens: &Vec<String>) -> Result<bool, ParserError> {
-    let lexer: Lexer<'_> = Lexer::new(&expression);
+pub fn check_authorization(expression: &str, tokens: &[String]) -> Result<bool, ParserError> {
+    let lexer: Lexer<'_> = Lexer::new(expression);
     let mut parser = Parser::new(lexer);
 
-    let auth_expr = parser.parse().map_err(|e| e.into())?;
+    let auth_expr = parser.parse()?;
     let authorized_labels = tokens.iter().cloned().collect();
     println!("{}, {:?}", auth_expr.to_json_str(), authorized_labels);
     let result = auth_expr.evaluate(&authorized_labels);
     Ok(result)
 }
 
-pub fn check_authorization_csv<'a>(
+pub fn check_authorization_csv(
     expression: String,
     tokens: String,
 ) -> Result<bool, ParserError> {

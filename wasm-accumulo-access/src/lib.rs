@@ -32,15 +32,14 @@ export const checkAuthorization = (expression: string, tokens: string[]): boolea
 /// console.log(result);
 #[wasm_bindgen(js_name = checkAuthorization, skip_typescript)]
 pub fn check_authorization(expression: &str, tokens: &Array) -> bool {
-    let lexer: Lexer<'_> = Lexer::new(&expression);
+    let lexer: Lexer<'_> = Lexer::new(expression);
     let mut parser = Parser::new(lexer);
 
     match parser.parse() {
         Ok(auth_expr) => {
             let authorized_labels: HashSet<String> =
                 tokens.iter().map(|s| s.as_string().unwrap()).collect();
-            let result = auth_expr.evaluate(&authorized_labels);
-            result
+            auth_expr.evaluate(&authorized_labels)
         }
         Err(e) => throw_str(e.to_string().as_str()),
     }

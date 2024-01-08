@@ -6,7 +6,7 @@ use thiserror::Error;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
-    AccessToken(String),
+    #[allow(clippy::enum_variant_names)] AccessToken(String),
     OpenParen,
     CloseParen,
     And,

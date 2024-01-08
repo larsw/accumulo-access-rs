@@ -12,7 +12,7 @@ fuzz_target!(|data: &[u8]| {
     if expression.is_err() {
         return;
     }
-    let lexer = accumulo_access::Lexer::new(&expression.unwrap());
+    let lexer = accumulo_access::Lexer::new(expression.unwrap());
     let mut parser = accumulo_access::Parser::new(lexer);
     let _ = parser.parse();
 });
