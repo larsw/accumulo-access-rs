@@ -2,6 +2,7 @@
 // Use of this source code is governed by the MIT or Apache-2.0 license that can be found in the LICENSE-MIT or LICENSE-APACHE files.
 
 use std::fmt::Display;
+use thiserror::Error;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
@@ -32,7 +33,7 @@ pub struct Lexer<'a> {
     position: usize,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Error, Debug, PartialEq, Clone)]
 pub enum LexerError {
     UnexpectedCharacter(char, usize),
 }

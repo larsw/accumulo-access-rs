@@ -5,3 +5,13 @@ members = [
   "wasm-accumulo-access",
   "fuzz"
 ]
+
+[profile.release.package.accumulo-access]
+opt-level = 3
+
+[profile.release.package.wasm-accumulo-access]
+# Tell `rustc` to optimize for small code size.
+opt-level = "s"
+
+[profile.release.package.accumulo-access-fuzz]
+debug = 1
