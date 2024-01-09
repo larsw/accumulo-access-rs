@@ -3,9 +3,16 @@
 
 use cached::{proc_macro::cached, Cached, SizedCache};
 
+fn get_cache_size() -> usize {
+    std::env::var("ACCUMULO_ACCESS_CACHE_SIZE")
+        .unwrap_or_else(|_| String::from("20000"))
+        .parse::<usize>()
+        .unwrap_or(20000)
+}
+
 #[cached(
 type = "SizedCache<String, Result<bool, super::ParserError>>",
-create = "{ SizedCache::with_size(20000) }",
+create = "{ SizedCache::with_size(get_cache_size()) }",
 convert = r##"{ format!("{}{}", expression, tokens) }"##
 )]
 pub fn check_authorization_csv(
