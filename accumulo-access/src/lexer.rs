@@ -4,9 +4,9 @@
 use std::fmt::Display;
 use thiserror::Error;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Error, uniffi::Enum)]
 pub enum Token {
-    #[allow(clippy::enum_variant_names)] AccessToken(String),
+    AccessToken{val: String},
     OpenParen,
     CloseParen,
     And,
@@ -16,7 +16,7 @@ pub enum Token {
 impl Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Token::AccessToken(token) => write!(f, "{:?}", token),
+            Token::AccessToken{val} => write!(f, "{:?}", val),
             Token::OpenParen => write!(f, "("),
             Token::CloseParen => write!(f, ")"),
             Token::And => write!(f, " & "),
@@ -107,14 +107,14 @@ impl<'a> Iterator for Lexer<'a> {
                 }
                 '"' => {
                     self.read_char();
-                    let mut string = String::new();
+                    let mut value = String::new();
                     while let Some(c) = self.peek_char() {
                         match c {
                             '\\' => {
                                 self.read_char();
                                 if let Some(next_char) = self.peek_char() {
                                     if next_char == '"' || next_char == '\\' {
-                                        string.push(self.read_char().unwrap());
+                                        value.push(self.read_char().unwrap());
                                     }
                                 }
                             }
@@ -122,13 +122,13 @@ impl<'a> Iterator for Lexer<'a> {
                                 break;
                             }
                             _ => {
-                                string.push(c);
+                                value.push(c);
                                 self.read_char();
                             }
                         }
                     }
                     self.read_char();
-                    return Some(Ok(Token::AccessToken(string)));
+                    return Some(Ok(Token::AccessToken{val: value}));
                 }
                 _ if is_allowed_character(c) => {
                     let mut id = String::new();
@@ -140,7 +140,7 @@ impl<'a> Iterator for Lexer<'a> {
                             break;
                         }
                     }
-                    return Some(Ok(Token::AccessToken(id)));
+                    return Some(Ok(Token::AccessToken{val: id}));
                 }
                 _ => {
                     self.read_char();
@@ -165,19 +165,19 @@ mod tests {
         assert_eq!(
             tokens,
             vec![
-                Ok(Token::AccessToken("label1".to_string())),
+                Ok(Token::AccessToken{val: "label1".to_string()}),
                 Ok(Token::And),
-                Ok(Token::AccessToken("label 🕺".to_string())),
+                Ok(Token::AccessToken{val: "label 🕺".to_string()}),
                 Ok(Token::Or),
                 Ok(Token::OpenParen),
-                Ok(Token::AccessToken("hello \\ \"world".to_string())),
+                Ok(Token::AccessToken{val: "hello \\ \"world".to_string()}),
                 Ok(Token::Or),
-                Ok(Token::AccessToken("label4".to_string())),
+                Ok(Token::AccessToken{val: "label4".to_string()}),
                 Ok(Token::Or),
                 Ok(Token::OpenParen),
-                Ok(Token::AccessToken("label5".to_string())),
+                Ok(Token::AccessToken{val: "label5".to_string()}),
                 Ok(Token::And),
-                Ok(Token::AccessToken("label6".to_string())),
+                Ok(Token::AccessToken{val: "label6".to_string()}),
                 Ok(Token::CloseParen),
                 Ok(Token::CloseParen),
                 Ok(Token::CloseParen),
@@ -193,7 +193,7 @@ mod tests {
         assert_ne!(
             tokens,
             vec![
-                Ok(Token::AccessToken("label1".to_string())),
+                Ok(Token::AccessToken{val: "label1".to_string()}),
                 Ok(Token::And),
                 Err(LexerError::UnexpectedCharacter('[', 9)),
             ]

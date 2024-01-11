@@ -6,32 +6,38 @@ use std::collections::HashSet;
 use crate::lexer::{Lexer, Token};
 use crate::ParserError::LexerError;
 use thiserror::Error;
+use uniffi::deps::log::error;
 
 /// `ParserError` is returned when the parser encounters an error.
-#[derive(Error, Debug, PartialEq, Clone)]
+#[derive(Error, Debug, PartialEq, Clone, uniffi::Enum)]
 pub enum ParserError {
     /// The scope (top-level or set of parentheses) is empty.
+    #[error("Empty scope")]
     EmptyScope,
     /// The scope is missing an operator ('&' or '|').
+    #[error("Missing operator")]
     MissingOperator,
     /// The parser encountered an unexpected token.
-    UnexpectedToken(Token),
+    #[error("Unexpected token: {token}")]
+    UnexpectedToken{token: String},
     /// The parser encountered a mix of operators ('&' and '|').
+    #[error("Mixing operators")]
     MixingOperators,
-    LexerError(crate::lexer::LexerError),
+    #[error("Lexer error: {error}")]
+    LexerError{error: String},
 }
 
-impl std::fmt::Display for ParserError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ParserError::EmptyScope => write!(f, "Empty scope"),
-            ParserError::MissingOperator => write!(f, "Missing operator"),
-            ParserError::UnexpectedToken(token) => write!(f, "Unexpected token: {}", token),
-            ParserError::MixingOperators => write!(f, "Mixing operators"),
-            ParserError::LexerError(e) => write!(f, "{}", e),
-        }
-    }
-}
+// impl std::fmt::Display for ParserError {
+//     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+//         match self {
+//             ParserError::EmptyScope => write!(f, "Empty scope"),
+//             ParserError::MissingOperator => write!(f, "Missing operator"),
+//             ParserError::UnexpectedToken(token) => write!(f, "Unexpected token: {}", token),
+//             ParserError::MixingOperators => write!(f, "Mixing operators"),
+//             ParserError::LexerError(e) => write!(f, "{}", e),
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub enum AuthorizationExpression {
@@ -168,7 +174,7 @@ impl Scope {
                     return Err(ParserError::MixingOperators);
                 }
             }
-            _ => return Err(ParserError::UnexpectedToken(operator.clone())),
+            _ => return Err(ParserError::UnexpectedToken{ token: format!("{}", operator.clone())}),
         }
         self.operator = Some(operator.clone());
         Ok(())
@@ -203,7 +209,7 @@ impl Scope {
         match operator {
             Token::And => Ok(AuthorizationExpression::And(nodes)),
             Token::Or => Ok(AuthorizationExpression::Or(nodes)),
-            _ => Err(ParserError::UnexpectedToken(operator)),
+            _ => Err(ParserError::UnexpectedToken{token: format!("{}", operator.clone())}),
         }
     }
 }
@@ -247,7 +253,7 @@ impl<'a> Parser<'a> {
             match result {
                 Ok(token) => {
                     match token {
-                        Token::AccessToken(value) => scope.add_label(value),
+                        Token::AccessToken{val} => scope.add_label(val),
                         Token::OpenParen => {
                             let node = self.parse()?;
                             scope.add_node(node.clone()); // The clone here is apparently important.
@@ -257,7 +263,7 @@ impl<'a> Parser<'a> {
                         Token::CloseParen => return scope.build(),
                     }
                 }
-                Err(e) => return Err(LexerError(e)),
+                Err(e) => return Err(LexerError{error: format!("{}",e)}),
             }
         }
         scope.build()

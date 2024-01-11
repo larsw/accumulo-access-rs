@@ -1,4 +1,4 @@
-use accumulo_access::check_authorization;
+use accumulo_access::check_authorization_by_list;
 
 // Used as a test fixture when RustRover doesn't recognize the #[rstest] macro.
 fn main() {
@@ -7,7 +7,7 @@ fn main() {
         String::from("label1"),
     ]);
 
-    match check_authorization(expression, tokens) {
+    match check_authorization_by_list(expression, tokens) {
         Ok(result) => {
             assert_eq!(result, true);
         }

@@ -13,11 +13,21 @@ default = ["caching"]
 caching = ["dep:cached"]
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "rlib", "staticlib"]
+name = "accumulo_access"
+
+#[[bin]]
+#name = "uniffi-bindgen"
+#path = "uniffi-bindgen.rs"
 
 [dependencies]
 cached = { version = "0.47.0", optional = true, features = ["ahash"] }
 thiserror = "1.0.56"
+uniffi = "0.25"
+
+[build-dependencies]
+uniffi = {version = "0.25", features = ["build"] }
 
 [dev-dependencies]
 rstest = "0.18.2"
+uniffi = { version = "0.25", features = ["bindgen-tests"] }
