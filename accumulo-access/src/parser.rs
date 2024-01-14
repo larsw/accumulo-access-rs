@@ -27,18 +27,6 @@ pub enum ParserError {
     LexerError{error: String},
 }
 
-// impl std::fmt::Display for ParserError {
-//     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-//         match self {
-//             ParserError::EmptyScope => write!(f, "Empty scope"),
-//             ParserError::MissingOperator => write!(f, "Missing operator"),
-//             ParserError::UnexpectedToken(token) => write!(f, "Unexpected token: {}", token),
-//             ParserError::MixingOperators => write!(f, "Mixing operators"),
-//             ParserError::LexerError(e) => write!(f, "{}", e),
-//         }
-//     }
-// }
-
 #[derive(Debug, Clone)]
 pub enum AuthorizationExpression {
     And(Vec<AuthorizationExpression>),
@@ -181,9 +169,6 @@ impl Scope {
     }
 
     fn build(&mut self) -> Result<AuthorizationExpression, ParserError> {
-        // if self.labels.is_empty() {
-        //     return Err(ParserError::EmptyScope);
-        // }
         if self.labels.len() == 1 && self.nodes.is_empty() {
             return Ok(AuthorizationExpression::AccessToken(
                 self.labels.pop().unwrap(),
@@ -206,6 +191,7 @@ impl Scope {
         while let Some(token) = self.nodes.pop() {
             nodes.push(token);
         }
+
         match operator {
             Token::And => Ok(AuthorizationExpression::And(nodes)),
             Token::Or => Ok(AuthorizationExpression::Or(nodes)),

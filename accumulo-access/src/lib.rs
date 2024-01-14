@@ -3,16 +3,14 @@
 
 uniffi::setup_scaffolding!();
 
-mod lexer;
-mod parser;
 #[cfg(feature = "caching")]
 pub mod caching;
+mod lexer;
+mod parser;
 
 pub use crate::lexer::Lexer;
 pub use crate::parser::Parser;
 pub use crate::parser::ParserError;
-
-
 
 /// Checks if the given set of access tokens authorizes access to the resource which protection is described by the given expression.
 ///
@@ -43,7 +41,10 @@ pub use crate::parser::ParserError;
 ///     Err(_) => panic!("Unexpected error"),
 ///    };
 /// ```
-pub fn check_authorization_by_list(expression: &str, tokens: &[String]) -> Result<bool, ParserError> {
+pub fn check_authorization_by_list(
+    expression: &str,
+    tokens: &[String],
+) -> Result<bool, ParserError> {
     let lexer: Lexer<'_> = Lexer::new(expression);
     let mut parser = Parser::new(lexer);
 
@@ -53,10 +54,7 @@ pub fn check_authorization_by_list(expression: &str, tokens: &[String]) -> Resul
     Ok(result)
 }
 
-pub fn check_authorization(
-    expression: String,
-    tokens: String,
-) -> Result<bool, ParserError> {
+pub fn check_authorization(expression: String, tokens: String) -> Result<bool, ParserError> {
     let tokens: Vec<String> = tokens.split(',').map(|s| s.to_string()).collect();
     check_authorization_by_list(expression.as_str(), &tokens)
 }
@@ -80,6 +78,10 @@ mod tests {
     #[case("((label2 | label3))", "label2", true)]
     #[case("((label2 & label3))", "label2", false)]
     #[case("(((((label2 & label3)))))", "label2", false)]
+    #[case("(a & b) & (c & d)", "a,b,c,d", true)]
+    #[case("(a & b) & (c & d)", "a,b,c", false)]
+    #[case("(a & b) | (c & d)", "a,b,d", true)]
+    #[case("(a | b) & (c | d)", "a,d", true)]
     fn test_check_authorization(
         #[case] expr: impl AsRef<str>,
         #[case] authorized_tokens: impl AsRef<str>,
