@@ -1,5 +1,5 @@
 // Copyright 2024 Lars Wilhelmsen <sral-backwards@sral.org>. All rights reserved.
-// Use of this source code is governed by the MIT or Apache-2.0 license that can be found in the LICENSE-MIT or LICENSE-APACHE files.
+// Use of this source code is governed by the MIT or Apache-2.0 license that can be found in the LICENSE_MIT or LICENSE_APACHE files.
 
 mod lexer;
 mod parser;
@@ -45,18 +45,24 @@ pub fn check_authorization(expression: &str, tokens: &[String]) -> Result<bool, 
 
     let auth_expr = parser.parse()?;
     let authorized_labels = tokens.iter().cloned().collect();
-    println!("{}, {:?}", auth_expr.to_json_str(), authorized_labels);
     let result = auth_expr.evaluate(&authorized_labels);
     Ok(result)
 }
 
+// Prepares a function that can be used to check if the given set of access tokens authorizes access to the resource which protection is described by the given expression.
+pub fn prepare_authorization_csv(tokens: String) -> impl Fn(String) -> Result<bool, ParserError> {
+    let tokens: Vec<String> = tokens.split(',').map(|s| s.to_string()).collect();
+    move |expression| check_authorization(expression.as_str(), &tokens)
+}
+
+/// Checks if the given set of access tokens authorizes access to the resource which protection is described by the given expression.
 pub fn check_authorization_csv(
     expression: String,
     tokens: String,
 ) -> Result<bool, ParserError> {
-    let tokens: Vec<String> = tokens.split(',').map(|s| s.to_string()).collect();
-    check_authorization(expression.as_str(), &tokens)
+    prepare_authorization_csv(tokens)(expression)
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -77,6 +83,7 @@ mod tests {
     #[case("((label2 | label3))", "label2", true)]
     #[case("((label2 & label3))", "label2", false)]
     #[case("(((((label2 & label3)))))", "label2", false)]
+    #[case("\"a b c\"", "\"a b c\"", true)]
     fn test_check_authorization(
         #[case] expr: impl AsRef<str>,
         #[case] authorized_tokens: impl AsRef<str>,
@@ -86,7 +93,7 @@ mod tests {
             .as_ref()
             .to_owned()
             .split(',')
-            .map(|s| s.to_string())
+            .map(|s| s.to_string().replace(&['"','\''], ""))
             .collect();
 
         let result = check_authorization(expr.as_ref(), &authorized_tokens).unwrap();
