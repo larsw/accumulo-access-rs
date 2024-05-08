@@ -1,7 +1,7 @@
 [package]
 name = "wasm-accumulo-access"
 publish = false
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Lars Wilhelmsen <sral-backwards@sral.org>"]
 description = "WASM API for parsing and evaluating Accumulo Access Expressions"
@@ -13,9 +13,9 @@ readme = "README.md"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wasm-bindgen = "0.2"
-accumulo-access = { version = "0.1.0", path = "../accumulo-access" }
-js-sys = { version = "0.3.66", features = [] }
+wasm-bindgen = "0.2.92"
+accumulo-access = { version = "0.1.4", path = "../accumulo-access" }
+js-sys = { version = "0.3.69", features = [] }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3"
+wasm-bindgen-test = "0.3.42"
