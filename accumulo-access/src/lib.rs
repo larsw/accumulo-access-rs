@@ -5,10 +5,12 @@ mod lexer;
 mod parser;
 #[cfg(feature = "caching")]
 pub mod caching;
+pub mod authorization_expression;
 
 pub use crate::lexer::Lexer;
 pub use crate::parser::Parser;
 pub use crate::parser::ParserError;
+pub use crate::authorization_expression::AuthorizationExpression;
 
 /// Checks if the given set of access tokens authorizes access to the resource which protection is described by the given expression.
 ///
@@ -89,11 +91,8 @@ mod tests {
         #[case] authorized_tokens: impl AsRef<str>,
         #[case] expected: bool,
     ) {
-        let authorized_tokens: Vec<String> = authorized_tokens
-            .as_ref()
-            .to_owned()
-            .split(',')
-            .map(|s| s.to_string().replace(&['"','\''], ""))
+        let authorized_tokens: Vec<String> = AsRef::as_ref(&authorized_tokens).split(',')
+            .map(|s| s.to_string().replace(['"','\''], ""))
             .collect();
 
         let result = check_authorization(expr.as_ref(), &authorized_tokens).unwrap();
