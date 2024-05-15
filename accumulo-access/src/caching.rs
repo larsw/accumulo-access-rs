@@ -10,8 +10,7 @@ fn get_cache_size() -> usize {
         .unwrap_or(20000)
 }
 
-#[cached(
-type = "SizedCache<String, Result<bool, super::ParserError>>",
+#[cached(ty = "SizedCache<String, Result<bool, super::ParserError>>",
 create = "{ SizedCache::with_size(get_cache_size()) }",
 convert = r##"{ format!("{}{}", expression, tokens) }"##
 )]

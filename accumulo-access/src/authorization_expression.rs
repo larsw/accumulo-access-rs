@@ -38,6 +38,32 @@ impl PartialEq for AuthorizationExpression {
 
 
 impl AuthorizationExpression {
+    pub fn new(json: &serde_json::Value) -> Result<Self, String> {
+        match json {
+            serde_json::Value::Object(obj) => {
+                if obj.contains_key("and") {
+                    let and = obj.get("and").unwrap().as_array().unwrap();
+                    let mut nodes = Vec::new();
+                    for node in and {
+                        nodes.push(AuthorizationExpression::new(node)?);
+                    }
+                    Ok(AuthorizationExpression::And(nodes))
+                } else if obj.contains_key("or") {
+                    let or = obj.get("or").unwrap().as_array().unwrap();
+                    let mut nodes = Vec::new();
+                    for node in or {
+                        nodes.push(AuthorizationExpression::new(node)?);
+                    }
+                    Ok(AuthorizationExpression::Or(nodes))
+                } else {
+                    Err("Invalid JSON object".to_string())
+                }
+            }
+            serde_json::Value::String(token) => Ok(AuthorizationExpression::AccessToken(token.to_string())),
+            _ => Err("Invalid JSON value".to_string()),
+        }
+    }
+    
     pub fn evaluate(&self, authorizations: &HashSet<String>) -> bool {
         match self {
             AuthorizationExpression::And(nodes) =>
@@ -75,6 +101,29 @@ impl AuthorizationExpression {
                 json
             }
             AuthorizationExpression::AccessToken(token) => format!("\"{}\"", token),
+        }
+    }
+    
+    // serialize the expression to json with serde
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            AuthorizationExpression::And(nodes) => {
+                let mut json = serde_json::json!({"and": []});
+                let and = json.as_object_mut().unwrap().get_mut("and").unwrap();
+                for node in nodes {
+                    and.as_array_mut().unwrap().push(node.to_json());
+                }
+                json
+            }
+            AuthorizationExpression::Or(nodes) => {
+                let mut json = serde_json::json!({"or": []});
+                let or = json.as_object_mut().unwrap().get_mut("or").unwrap();
+                for node in nodes {
+                    or.as_array_mut().unwrap().push(node.to_json());
+                }
+                json
+            }
+            AuthorizationExpression::AccessToken(token) => serde_json::json!(token),
         }
     }
 

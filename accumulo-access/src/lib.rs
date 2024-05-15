@@ -12,6 +12,19 @@ pub use crate::parser::Parser;
 pub use crate::parser::ParserError;
 pub use crate::authorization_expression::AuthorizationExpression;
 
+pub enum JsonError {
+    ParsingFailed(String),
+}
+
+// implement Display for JsonError 
+impl std::fmt::Display for JsonError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            JsonError::ParsingFailed(e) => write!(f, "{}", e),
+        }
+    }
+}
+
 /// Checks if the given set of access tokens authorizes access to the resource which protection is described by the given expression.
 ///
 /// Arguments:
@@ -65,6 +78,29 @@ pub fn check_authorization_csv(
     prepare_authorization_csv(tokens)(expression)
 }
 
+pub fn expression_to_json_string(expression: &str) -> Result<String, ParserError> {
+    let lexer: Lexer<'_> = Lexer::new(expression);
+    let mut parser = Parser::new(lexer);
+
+    let auth_expr = parser.parse();
+    
+    match auth_expr {
+        Ok(auth_expr) => {
+            Ok(auth_expr.to_json_str())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub fn expression_to_json(expression: &str) -> Result<serde_json::Value, JsonError> {
+    let lexer: Lexer<'_> = Lexer::new(expression);
+    let mut parser = Parser::new(lexer);
+    let expr = parser.parse();
+    match expr {
+        Ok(expr) => Ok(expr.to_json()),
+        Err(e) => Err(JsonError::ParsingFailed(format!("{:?}", e))),
+    }
+}
 
 #[cfg(test)]
 mod tests {
