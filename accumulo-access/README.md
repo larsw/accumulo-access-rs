@@ -4,7 +4,7 @@
 
 This crate provides a Rust API for parsing and evaluating Accumulo Access Expressions, based on the [AccessExpression specification](https://github.com/apache/accumulo-access/blob/main/SPECIFICATION.md).
 
-## Usage
+## Quickstart
 
 Add the following to your `Cargo.toml`:
 
@@ -26,11 +26,16 @@ fn main() {
 }
 ```
 
+## Functionality
+
+* Mostly follows the specification.
+* Using the equivalent method in `caching::check_authorization` will memoize/cache the result based on the input (expression+authorization tuple).
+* Possibility to return parsed expression as an expression tree; either as a serde JSON Value-based tree, or a JSON string representation.
+
 ## Limitations
 
 * It doesn't limit the unicode ranges in quoted access tokens (ref. the specification).
 * It doesn't have functionality for normalizing expressions (ref. the Java-based accumulo-access project).
-* It doesn't have functionality for serializing expression trees to a string representation. 
 
 ## Known usages
 
