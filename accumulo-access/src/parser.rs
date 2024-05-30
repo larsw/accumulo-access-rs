@@ -1,7 +1,7 @@
 // Copyright 2024 Lars Wilhelmsen <sral-backwards@sral.org>. All rights reserved.
 // Use of this source code is governed by the MIT or Apache-2.0 license that can be found in the LICENSE_MIT or LICENSE_APACHE files.
 
-use crate::lexer::{Lexer, Token};
+use crate::lexer::{Lexer, Operator, Token};
 use thiserror::Error;
 use crate::authorization_expression::AuthorizationExpression;
 
@@ -16,6 +16,7 @@ pub enum ParserError {
     UnexpectedToken(Token),
     /// The parser encountered a mix of operators ('&' and '|').
     MixingOperators,
+    /// The parser encountered a lexer error.
     LexerError(crate::lexer::LexerError),
 }
 
@@ -34,62 +35,73 @@ impl std::fmt::Display for ParserError {
 #[derive(Debug)]
 struct Scope {
     nodes: Vec<AuthorizationExpression>,
-    labels: Vec<String>,
-    operator: Option<Token>,
+    access_tokens: Vec<String>,
+    operator: Option<Operator>,
 }
 
 impl Scope {
     fn new() -> Self {
         Scope {
             nodes: Vec::new(),
-            labels: Vec::new(),
+            access_tokens: Vec::new(),
             operator: None,
         }
     }
 
-    fn add_node(&mut self, token: AuthorizationExpression) {
+    fn append_node(&mut self, token: AuthorizationExpression) {
         self.nodes.push(token);
     }
 
-    fn add_label(&mut self, label: String) {
-        self.labels.push(label);
+    fn append_access_token(&mut self, label: String) {
+        self.access_tokens.push(label);
     }
 
-    fn set_operator(&mut self, operator: &Token) -> Result<(), ParserError> {
+    fn disjunction(&mut self) -> Result<(), ParserError> {
+        self.set_operator(&Operator::Disjunction)
+    }
+
+    fn conjunction(&mut self) -> Result<(), ParserError> {
+        self.set_operator(&Operator::Conjunction)
+    }
+
+    fn set_operator(&mut self, operator: &Operator) -> Result<(), ParserError> {
         match operator {
-            Token::And => {
-                if let Some(Token::Or) = self.operator {
+            Operator::Conjunction => {
+                if let Some(Operator::Disjunction) = self.operator {
                     return Err(ParserError::MixingOperators);
                 }
             }
-            Token::Or => {
-                if let Some(Token::And) = self.operator {
+            Operator::Disjunction => {
+                if let Some(Operator::Conjunction) = self.operator {
                     return Err(ParserError::MixingOperators);
                 }
             }
-            _ => return Err(ParserError::UnexpectedToken(operator.clone())),
         }
         self.operator = Some(operator.clone());
         Ok(())
     }
 
     fn build(&mut self) -> Result<AuthorizationExpression, ParserError> {
-        if self.labels.len() == 1 && self.nodes.is_empty() {
+       if self.access_tokens.is_empty() && self.nodes.is_empty() {
+           return Ok(AuthorizationExpression::Nil)
+       }
+       
+        if self.access_tokens.len() == 1 && self.nodes.is_empty() {
             return Ok(AuthorizationExpression::AccessToken(
-                self.labels.pop().unwrap(),
+                self.access_tokens.pop().unwrap(),
             ));
         }
         // if it is a scope wrapping a single node, return the node
-        if self.nodes.len() == 1 && self.labels.is_empty() {
+        if self.nodes.len() == 1 && self.access_tokens.is_empty() {
             return Ok(self.nodes.pop().unwrap());
         }
         if self.operator.is_none() {
             return Err(ParserError::MissingOperator);
         }
         let operator = self.operator.take().unwrap();
-        let mut nodes = Vec::with_capacity(self.labels.len() + self.nodes.len());
+        let mut nodes = Vec::with_capacity(self.access_tokens.len() + self.nodes.len());
 
-        while let Some(label) = self.labels.pop() {
+        while let Some(label) = self.access_tokens.pop() {
             nodes.push(AuthorizationExpression::AccessToken(label));
         }
 
@@ -97,9 +109,8 @@ impl Scope {
             nodes.push(token);
         }
         match operator {
-            Token::And => Ok(AuthorizationExpression::And(nodes)),
-            Token::Or => Ok(AuthorizationExpression::Or(nodes)),
-            _ => Err(ParserError::UnexpectedToken(operator)),
+            Operator::Conjunction => Ok(AuthorizationExpression::ConjunctionOf(nodes)),
+            Operator::Disjunction => Ok(AuthorizationExpression::DisjunctionOf(nodes))
         }
     }
 }
@@ -126,7 +137,7 @@ impl<'a> Parser<'a> {
     /// ```
     ///  use std::collections::HashSet;
     ///  use accumulo_access::{Lexer, Parser};
-    ///  let input = "label1 & label5 & (label3 | label8 | \"label 🕺\")";
+    ///  let input = "label1&label5&(label3|label8|\"label 🕺\")";
     ///  let lexer: Lexer<'_> = Lexer::new(input);
     ///  let mut parser = Parser::new(lexer);
     ///  let ast = parser.parse().unwrap();
@@ -143,17 +154,19 @@ impl<'a> Parser<'a> {
             match result {
                 Ok(token) => {
                     match token {
-                        Token::AccessToken(value) => scope.add_label(value),
+                        Token::AccessToken(value) => scope.append_access_token(value),
                         Token::OpenParen => {
                             let node = self.parse()?;
-                            scope.add_node(node.clone()); // The clone here is apparently important.
+                            scope.append_node(node.clone()); // The clone here is apparently important.
                         }
-                        Token::And => scope.set_operator(&Token::And)?,
-                        Token::Or => scope.set_operator(&Token::Or)?,
+                        Token::And => scope.conjunction()?,
+                        Token::Or => scope.disjunction()?,
                         Token::CloseParen => return scope.build(),
                     }
                 }
-                Err(e) => return Err(ParserError::LexerError(e)),
+                Err(e) => {
+                    return Err(ParserError::LexerError(e));  
+                } 
             }
         }
         scope.build()

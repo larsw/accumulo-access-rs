@@ -65,7 +65,7 @@ pub fn to_expression_tree(expression: &str) -> Result<JsValue, JsValue> {
 
 fn to_expression_tree_inner(expression: &AuthorizationExpression) -> Result<JsValue, JsValue> {
     match expression {
-        AuthorizationExpression::And(nodes) => {
+        AuthorizationExpression::ConjunctionOf(nodes) => {
             let labels = Array::new();
             for node in nodes {
                 labels.push(&to_expression_tree_inner(node).unwrap());
@@ -75,7 +75,7 @@ fn to_expression_tree_inner(expression: &AuthorizationExpression) -> Result<JsVa
             Reflect::set(&and_node, &JsValue::from("and"), &labels).unwrap();
             Ok(JsValue::from(and_node))
         }
-        AuthorizationExpression::Or(nodes) => {
+        AuthorizationExpression::DisjunctionOf(nodes) => {
             let labels = Array::new();
             for node in nodes {
                 labels.push(&to_expression_tree_inner(node).unwrap());

@@ -28,9 +28,7 @@ fn main() {
 
 ## Limitations
 
-* It doesn't limit the unicode ranges in quoted access tokens (ref. the specification).
 * It doesn't have functionality for normalizing expressions (ref. the Java-based accumulo-access project).
-* It doesn't have functionality for serializing expression trees to a string representation. 
 
 ## Known usages
 
