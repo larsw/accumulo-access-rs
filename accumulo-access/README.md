@@ -28,14 +28,8 @@ fn main() {
 
 ## Functionality
 
-* Mostly follows the specification.
 * Using the equivalent method in `caching::check_authorization` will memoize/cache the result based on the input (expression+authorization tuple).
 * Possibility to return parsed expression as an expression tree; either as a serde JSON Value-based tree, or a JSON string representation.
-
-## Limitations
-
-* It doesn't limit the unicode ranges in quoted access tokens (ref. the specification).
-* It doesn't have functionality for normalizing expressions (ref. the Java-based accumulo-access project).
 
 ## Known usages
 
