@@ -85,6 +85,7 @@ fn to_expression_tree_inner(expression: &AuthorizationExpression) -> Result<JsVa
             Ok(JsValue::from(and_node))
         }
         AuthorizationExpression::AccessToken(token) => Ok(JsValue::from(token)),
+        AuthorizationExpression::Nil => { Ok(JsValue::NULL)}
     }
 }
 
