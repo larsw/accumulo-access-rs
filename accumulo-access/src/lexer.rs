@@ -103,7 +103,7 @@ fn is_allowed_char_for_quoted_access_token(c: char) -> bool {
         || (c as u32) >= 0xE000 && (c as u32) <= 0x10FFFF
 }
 
-impl<'a> Iterator for Lexer<'a> {
+impl Iterator for Lexer<'_> {
     type Item = Result<Token, LexerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -141,7 +141,7 @@ impl<'a> Iterator for Lexer<'a> {
     }
 }
 
-impl<'a> Lexer<'a> {
+impl Lexer<'_> {
     fn handle_quoted_access_token(&mut self) -> Result<Token, LexerError> {
         let mut value = String::new();
         //self.read_char(); // discard the opening quote
