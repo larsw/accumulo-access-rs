@@ -16,7 +16,7 @@ caching = ["dep:cached"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-cached = { version = "0.54", optional = true, features = ["ahash"] }
+cached = { version = "0.55", optional = true, features = ["ahash"] }
 thiserror = "2.0"
 serde = { version = "1.0" }
 serde_json = { version = "1.0" }
