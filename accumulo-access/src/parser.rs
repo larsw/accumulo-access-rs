@@ -1,20 +1,23 @@
 // Copyright 2024 Lars Wilhelmsen <sral-backwards@sral.org>. All rights reserved.
 // Use of this source code is governed by the MIT or Apache-2.0 license that can be found in the LICENSE_MIT or LICENSE_APACHE files.
 
-use crate::lexer::{Lexer, Operator, Token};
-use thiserror::Error;
 use crate::authorization_expression::AuthorizationExpression;
+use crate::lexer::{Lexer, Operator, Token};
+use std::iter::Peekable;
+use thiserror::Error;
 
 /// `ParserError` is returned when the parser encounters an error.
 #[derive(Error, Debug, PartialEq, Clone)]
 pub enum ParserError {
-    /// The scope (top-level or set of parentheses) is empty.
+    /// A parenthesised scope is empty, e.g. `()`.
     EmptyScope,
-    /// The scope is missing an operator ('&' or '|').
+    /// Two operands appear next to each other with no operator between them.
     MissingOperator,
     /// The parser encountered an unexpected token.
     UnexpectedToken(Token),
-    /// The parser encountered a mix of operators ('&' and '|').
+    /// The expression ended while an access token, a scope or a `)` was still expected.
+    UnexpectedEndOfExpression,
+    /// The parser encountered a mix of operators ('&' and '|') in one scope.
     MixingOperators,
     /// The parser encountered a lexer error.
     LexerError(crate::lexer::LexerError),
@@ -26,98 +29,27 @@ impl std::fmt::Display for ParserError {
             ParserError::EmptyScope => write!(f, "Empty scope"),
             ParserError::MissingOperator => write!(f, "Missing operator"),
             ParserError::UnexpectedToken(token) => write!(f, "Unexpected token: {}", token),
+            ParserError::UnexpectedEndOfExpression => write!(f, "Unexpected end of expression"),
             ParserError::MixingOperators => write!(f, "Mixing operators"),
             ParserError::LexerError(e) => write!(f, "{}", e),
         }
     }
 }
 
-#[derive(Debug)]
-struct Scope {
-    nodes: Vec<AuthorizationExpression>,
-    access_tokens: Vec<String>,
-    operator: Option<Operator>,
-}
-
-impl Scope {
-    fn new() -> Self {
-        Scope {
-            nodes: Vec::new(),
-            access_tokens: Vec::new(),
-            operator: None,
-        }
-    }
-
-    fn append_node(&mut self, token: AuthorizationExpression) {
-        self.nodes.push(token);
-    }
-
-    fn append_access_token(&mut self, label: String) {
-        self.access_tokens.push(label);
-    }
-
-    fn disjunction(&mut self) -> Result<(), ParserError> {
-        self.set_operator(&Operator::Disjunction)
-    }
-
-    fn conjunction(&mut self) -> Result<(), ParserError> {
-        self.set_operator(&Operator::Conjunction)
-    }
-
-    fn set_operator(&mut self, operator: &Operator) -> Result<(), ParserError> {
-        match operator {
-            Operator::Conjunction => {
-                if let Some(Operator::Disjunction) = self.operator {
-                    return Err(ParserError::MixingOperators);
-                }
-            }
-            Operator::Disjunction => {
-                if let Some(Operator::Conjunction) = self.operator {
-                    return Err(ParserError::MixingOperators);
-                }
-            }
-        }
-        self.operator = Some(operator.clone());
-        Ok(())
-    }
-
-    fn build(&mut self) -> Result<AuthorizationExpression, ParserError> {
-       if self.access_tokens.is_empty() && self.nodes.is_empty() {
-           return Ok(AuthorizationExpression::Nil)
-       }
-       
-        if self.access_tokens.len() == 1 && self.nodes.is_empty() {
-            return Ok(AuthorizationExpression::AccessToken(
-                self.access_tokens.pop().unwrap(),
-            ));
-        }
-        // if it is a scope wrapping a single node, return the node
-        if self.nodes.len() == 1 && self.access_tokens.is_empty() {
-            return Ok(self.nodes.pop().unwrap());
-        }
-        if self.operator.is_none() {
-            return Err(ParserError::MissingOperator);
-        }
-        let operator = self.operator.take().unwrap();
-        let mut nodes = Vec::with_capacity(self.access_tokens.len() + self.nodes.len());
-
-        while let Some(label) = self.access_tokens.pop() {
-            nodes.push(AuthorizationExpression::AccessToken(label));
-        }
-
-        while let Some(token) = self.nodes.pop() {
-            nodes.push(token);
-        }
-        match operator {
-            Operator::Conjunction => Ok(AuthorizationExpression::ConjunctionOf(nodes)),
-            Operator::Disjunction => Ok(AuthorizationExpression::DisjunctionOf(nodes))
-        }
-    }
-}
-
 /// `Parser` is used to parse an expression and return an `AuthorizationExpression`-based tree.
+///
+/// It is a recursive-descent parser for the grammar in the
+/// [AccessExpression specification](https://github.com/apache/accumulo-access/blob/main/SPECIFICATION.md):
+///
+/// ```abnf
+/// access-expression = [expression]  ; only the expression as a whole may be empty
+/// expression        = (access-token / paren-expression) [and-expression / or-expression]
+/// paren-expression  = "(" expression ")"
+/// and-expression    = "&" (access-token / paren-expression) [and-expression]
+/// or-expression     = "|" (access-token / paren-expression) [or-expression]
+/// ```
 pub struct Parser<'a> {
-    lexer: Lexer<'a>,
+    lexer: Peekable<Lexer<'a>>,
 }
 
 impl<'a> Parser<'a> {
@@ -127,7 +59,9 @@ impl<'a> Parser<'a> {
     ///
     /// * `lexer` - The `Lexer` instance to use for tokenization.
     pub fn new(lexer: Lexer<'a>) -> Self {
-        Parser { lexer }
+        Parser {
+            lexer: lexer.peekable(),
+        }
     }
 
     /// Parse the input string and return an AuthorizationExpression.
@@ -149,26 +83,226 @@ impl<'a> Parser<'a> {
     ///  assert_eq!(ast.evaluate(&authorized_tokens), true);
     /// ```
     pub fn parse(&mut self) -> Result<AuthorizationExpression, ParserError> {
-        let mut scope = Scope::new();
-        while let Some(result) = self.lexer.next() {
-            match result {
-                Ok(token) => {
-                    match token {
-                        Token::AccessToken(value) => scope.append_access_token(value),
-                        Token::OpenParen => {
-                            let node = self.parse()?;
-                            scope.append_node(node.clone()); // The clone here is apparently important.
-                        }
-                        Token::And => scope.conjunction()?,
-                        Token::Or => scope.disjunction()?,
-                        Token::CloseParen => return scope.build(),
-                    }
-                }
-                Err(e) => {
-                    return Err(ParserError::LexerError(e));  
-                } 
-            }
+        // access-expression = [expression]. The empty string is a valid access
+        // expression, and it authorizes everything.
+        if self.peek()?.is_none() {
+            return Ok(AuthorizationExpression::Nil);
         }
-        scope.build()
+
+        let expression = self.parse_expression()?;
+
+        // A trailing `)` has no scope to close, e.g. `A)`.
+        match self.next_token()? {
+            None => Ok(expression),
+            Some(token) => Err(ParserError::UnexpectedToken(token)),
+        }
+    }
+
+    /// `expression = (access-token / paren-expression) [and-expression / or-expression]`
+    fn parse_expression(&mut self) -> Result<AuthorizationExpression, ParserError> {
+        let first = self.parse_operand()?;
+
+        let operator = match self.peek()? {
+            Some(Token::And) => Operator::Conjunction,
+            Some(Token::Or) => Operator::Disjunction,
+            Some(Token::AccessToken(_) | Token::OpenParen) => {
+                return Err(ParserError::MissingOperator)
+            }
+            // `None` ends the expression, `)` ends the enclosing scope; either
+            // way this is a single operand and our caller deals with the rest.
+            _ => return Ok(first),
+        };
+
+        let mut nodes = vec![first];
+        loop {
+            match self.peek()? {
+                Some(Token::And) if operator == Operator::Conjunction => {}
+                Some(Token::Or) if operator == Operator::Disjunction => {}
+                // "Once a `&` is seen, then can only have `&` and not `|`,
+                // unless using parenthesis" -- and the same the other way round.
+                Some(Token::And | Token::Or) => return Err(ParserError::MixingOperators),
+                Some(Token::AccessToken(_) | Token::OpenParen) => {
+                    return Err(ParserError::MissingOperator)
+                }
+                _ => break,
+            }
+            self.next_token()?;
+            nodes.push(self.parse_operand()?);
+        }
+
+        Ok(match operator {
+            Operator::Conjunction => AuthorizationExpression::ConjunctionOf(nodes),
+            Operator::Disjunction => AuthorizationExpression::DisjunctionOf(nodes),
+        })
+    }
+
+    /// `access-token / paren-expression` -- the operand an expression, a `&` or
+    /// a `|` must be followed by.
+    fn parse_operand(&mut self) -> Result<AuthorizationExpression, ParserError> {
+        match self.next_token()? {
+            Some(Token::AccessToken(value)) => Ok(AuthorizationExpression::AccessToken(value)),
+            Some(Token::OpenParen) => {
+                // paren-expression = "(" expression ")". Unlike the expression
+                // as a whole, a parenthesised one may not be empty.
+                if let Some(Token::CloseParen) = self.peek()? {
+                    return Err(ParserError::EmptyScope);
+                }
+                let inner = self.parse_expression()?;
+                match self.next_token()? {
+                    Some(Token::CloseParen) => Ok(inner),
+                    Some(token) => Err(ParserError::UnexpectedToken(token)),
+                    None => Err(ParserError::UnexpectedEndOfExpression),
+                }
+            }
+            // An expression must start with an access token or a scope, so a
+            // leading or doubled operator lands here (`&A`, `A&&B`).
+            Some(token) => Err(ParserError::UnexpectedToken(token)),
+            // An access token or a scope must follow an operator (`A&`).
+            None => Err(ParserError::UnexpectedEndOfExpression),
+        }
+    }
+
+    fn next_token(&mut self) -> Result<Option<Token>, ParserError> {
+        match self.lexer.next() {
+            Some(Ok(token)) => Ok(Some(token)),
+            Some(Err(e)) => Err(ParserError::LexerError(e)),
+            None => Ok(None),
+        }
+    }
+
+    fn peek(&mut self) -> Result<Option<&Token>, ParserError> {
+        match self.lexer.peek() {
+            Some(Ok(token)) => Ok(Some(token)),
+            Some(Err(e)) => Err(ParserError::LexerError(e.clone())),
+            None => Ok(None),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    fn parse(expression: &str) -> Result<AuthorizationExpression, ParserError> {
+        Parser::new(Lexer::new(expression)).parse()
+    }
+
+    fn token(value: &str) -> AuthorizationExpression {
+        AuthorizationExpression::AccessToken(value.to_string())
+    }
+
+    #[rstest]
+    // The four "Examples of Proper Expressions" from the specification.
+    #[case("BLUE")]
+    #[case("RED&BLUE")]
+    #[case("RED&BLUE&GREEN")]
+    #[case("(RED&BLUE)|(GREEN&(PINK|PURPLE))")]
+    // Nesting and quoting.
+    #[case("((label2|label3))")]
+    #[case("(((((label2&label3)))))")]
+    #[case("label1&label5&(label3|label8|\"label 🕺\")")]
+    #[case("\"abc!12\"&\"abc\\\\xyz\"&GHI")]
+    #[case("A&(B|C)&D")]
+    #[case("(A|B)&(C|D)")]
+    fn accepts_valid_expressions(#[case] expression: &str) {
+        assert!(
+            parse(expression).is_ok(),
+            "expected {expression:?} to parse, got {:?}",
+            parse(expression)
+        );
+    }
+
+    #[test]
+    fn accepts_the_empty_expression() {
+        assert_eq!(Ok(AuthorizationExpression::Nil), parse(""));
+    }
+
+    #[rstest]
+    // The four "Examples of Improper Expressions" from the specification.
+    #[case("&BLUE", ParserError::UnexpectedToken(Token::And))]
+    #[case("(RED&BLUE)|", ParserError::UnexpectedEndOfExpression)]
+    #[case("RED&BLUE|GREEN", ParserError::MixingOperators)]
+    #[case("RED|BLUE&GREEN", ParserError::MixingOperators)]
+    // Trailing operator.
+    #[case("label1&", ParserError::UnexpectedEndOfExpression)]
+    #[case("label1|", ParserError::UnexpectedEndOfExpression)]
+    #[case("label1&label2&", ParserError::UnexpectedEndOfExpression)]
+    #[case("(A&B", ParserError::UnexpectedEndOfExpression)]
+    // Leading operator.
+    #[case("|label1", ParserError::UnexpectedToken(Token::Or))]
+    #[case("(&label1)", ParserError::UnexpectedToken(Token::And))]
+    // Repeated operator.
+    #[case("label1&&label2", ParserError::UnexpectedToken(Token::And))]
+    #[case("label1||label2", ParserError::UnexpectedToken(Token::Or))]
+    #[case("label1&|label2", ParserError::UnexpectedToken(Token::Or))]
+    // Unbalanced parentheses.
+    #[case("(label1", ParserError::UnexpectedEndOfExpression)]
+    #[case("(label1|label2", ParserError::UnexpectedEndOfExpression)]
+    #[case("label1&(label2", ParserError::UnexpectedEndOfExpression)]
+    #[case("label1)", ParserError::UnexpectedToken(Token::CloseParen))]
+    #[case("(label1))", ParserError::UnexpectedToken(Token::CloseParen))]
+    #[case("A&B)", ParserError::UnexpectedToken(Token::CloseParen))]
+    // Empty scope: `paren-expression` requires an `expression` inside.
+    #[case("()", ParserError::EmptyScope)]
+    #[case("(())", ParserError::EmptyScope)]
+    #[case("A&()", ParserError::EmptyScope)]
+    // Two operands with no operator between them.
+    #[case("A(B)", ParserError::MissingOperator)]
+    #[case("(A)(B)", ParserError::MissingOperator)]
+    #[case("A\"B\"", ParserError::MissingOperator)]
+    #[case("A&B(C)", ParserError::MissingOperator)]
+    fn rejects_invalid_expressions(#[case] expression: &str, #[case] expected: ParserError) {
+        assert_eq!(Err(expected), parse(expression), "for {expression:?}");
+    }
+
+    #[test]
+    fn mixing_operators_is_allowed_across_scopes() {
+        assert!(parse("RED&(BLUE|GREEN)").is_ok());
+        assert!(parse("RED|(BLUE&GREEN)").is_ok());
+    }
+
+    #[rstest]
+    // Whitespace is not part of the access-token character set, so it fails in
+    // the lexer rather than reading as a missing operator.
+    #[case("[", crate::lexer::LexerError::UnexpectedCharacter('[', 1))]
+    #[case("A&B C", crate::lexer::LexerError::UnexpectedCharacter(' ', 4))]
+    #[case("A & B", crate::lexer::LexerError::UnexpectedCharacter(' ', 2))]
+    fn a_lexer_error_is_reported_as_such(
+        #[case] expression: &str,
+        #[case] expected: crate::lexer::LexerError,
+    ) {
+        assert_eq!(
+            Err(ParserError::LexerError(expected)),
+            parse(expression),
+            "for {expression:?}"
+        );
+    }
+
+    #[test]
+    fn operands_keep_their_source_order() {
+        assert_eq!(
+            Ok(AuthorizationExpression::ConjunctionOf(vec![
+                token("A"),
+                token("B"),
+                token("C"),
+            ])),
+            parse("A&B&C")
+        );
+        // `PartialEq` on the tree is order-insensitive, so compare the
+        // serialised form to actually pin the order down.
+        assert_eq!(
+            "{\"and\":[\"A\",\"B\",\"C\"]}",
+            parse("A&B&C").unwrap().to_json_str()
+        );
+        assert_eq!(
+            "{\"or\":[\"A\",{\"and\":[\"B\",\"C\"]}]}",
+            parse("A|(B&C)").unwrap().to_json_str()
+        );
+    }
+
+    #[test]
+    fn a_redundant_scope_collapses_to_its_content() {
+        assert_eq!(Ok(token("A")), parse("(((A)))"));
     }
 }

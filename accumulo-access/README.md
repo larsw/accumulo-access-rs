@@ -10,7 +10,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-accumulo-access = "0.1"
+accumulo-access = "0.2"
 ```
 
 ## Example
