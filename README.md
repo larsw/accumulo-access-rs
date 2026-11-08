@@ -10,7 +10,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-accumulo-access = "0.2"
+accumulo-access = "0.3"
 ```
 
 ## Example
@@ -51,7 +51,7 @@ is kept in this repository.
 2. Tag the commit and push the tag:
 
    ```bash
-   git tag v0.2.0 && git push origin v0.2.0
+   git tag v0.3.0 && git push origin v0.3.0
    ```
 
 The workflow refuses to run if the tag and `Cargo.toml` disagree. It then tests the workspace
