@@ -550,6 +550,7 @@ mod tests {
             "(A|B)&(C|D)",
             "\"a b\"&\"x\\\"y\\\\z\"",
             "\"a|b\"",
+            "\"tab\there\"|\"nul\0\"",
         ] {
             let expr = parse(input);
             assert_eq!(parse(&expr.to_expression_str()), expr, "{}", input);

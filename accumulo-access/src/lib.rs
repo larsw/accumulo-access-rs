@@ -143,6 +143,7 @@ mod tests {
     #[case("", "anything", true)]
     #[case("((label1|label2)&(label3|label4))", "label1,label3", true)]
     #[case("\"标签A\"|label2", "标签A", true)]
+    #[case("\"tab\there\"&label2", "tab\there,label2", true)] // Control characters are allowed when quoted.
     fn test_check_authorization(
         #[case] expr: impl AsRef<str>,
         #[case] authorized_tokens: impl AsRef<str>,
