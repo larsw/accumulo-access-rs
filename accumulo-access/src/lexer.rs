@@ -94,18 +94,6 @@ pub(crate) fn is_allowed_char_for_unquoted_access_token(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':' || c == '/'
 }
 
-fn is_allowed_char_for_quoted_access_token(c: char) -> bool {
-    // from SPECIFICATION.md:
-    //
-    // check that the character is in the valid ranges:
-    // utf8-subset             = %x20-21 / %x23-5B / %x5D-7E / unicode-beyond-ascii ; utf8 minus '"' and '\'
-    // unicode-beyond-ascii    = %x0080-D7FF / %xE000-10FFFF
-    c.is_ascii_graphic()
-        || c == ' '
-        || (c as u32) >= 0x0080 && (c as u32) <= 0xD7FF
-        || (c as u32) >= 0xE000 && (c as u32) <= 0x10FFFF
-}
-
 impl Iterator for Lexer<'_> {
     type Item = Result<Token, LexerError>;
 
@@ -143,14 +131,20 @@ impl Iterator for Lexer<'_> {
 }
 
 impl Lexer<'_> {
+    /// Reads a quoted access token, whose opening quote has already been read. From
+    /// SPECIFICATION.md:
+    ///
+    /// ```text
+    /// access-token   =/ DQUOTE 1*(unicode-subset / escaped) DQUOTE
+    /// unicode-subset = %x00-21 / %x23-5B / %x5D-7F / unicode-beyond-ascii ; unicode minus '"' and '\'
+    /// escaped        = "\" DQUOTE / "\\"
+    /// ```
+    ///
+    /// So every character other than `"` and `\`, control characters included, stands for itself.
     fn handle_quoted_access_token(&mut self) -> Result<Token, LexerError> {
-        // The opening quote has already been read.
         let start = self.position;
         let mut value = String::new();
         while let Some(c) = self.read_char() {
-            if !is_allowed_char_for_quoted_access_token(c) {
-                return Err(LexerError::UnexpectedCharacter(c, self.position));
-            }
             match c {
                 '\\' => match self.read_char() {
                     Some(escaped @ ('"' | '\\')) => value.push(escaped),
@@ -269,6 +263,28 @@ mod tests {
         assert_eq!(
             tokens,
             vec![Ok(Token::AccessToken("abc-def:ghi".to_string()))]
+        );
+    }
+
+    #[test]
+    fn test_lexer_quoted_token_with_control_characters() {
+        let tokens: Vec<_> = Lexer::new("\"a\tb\n\r\0\u{7f}c\"").collect();
+        assert_eq!(
+            tokens,
+            vec![Ok(Token::AccessToken("a\tb\n\r\0\u{7f}c".to_string()))]
+        );
+    }
+
+    #[test]
+    fn test_lexer_control_characters_outside_quotes() {
+        let tokens: Vec<_> = Lexer::new("a\tb").collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Ok(Token::AccessToken("a".to_string())),
+                Err(LexerError::UnexpectedCharacter('\t', 2)),
+                Ok(Token::AccessToken("b".to_string())),
+            ]
         );
     }
 
