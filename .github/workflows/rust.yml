@@ -20,6 +20,18 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+
+  wasm:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Add the wasm target
+      run: rustup target add wasm32-unknown-unknown
     - uses: jetli/wasm-pack-action@v0.4.0
       with:
         version: 'latest'
+    - name: Run the wasm tests in headless Chrome
+      working-directory: wasm-accumulo-access
+      run: wasm-pack test --headless --chrome

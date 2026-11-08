@@ -1,0 +1,55 @@
+name: Lean oracle
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  DIFFTEST: target/release/accumulo-access-oracle-difftest
+
+jobs:
+  oracle:
+    name: Check the proofs and diff-test the crate against the oracle
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    # Installs the Lean version pinned in lean-oracle/lean-toolchain and builds the oracle, which
+    # checks the proofs. AccessOracle/Axioms.lean fails the build if a proof uses `sorry` or
+    # `native_decide`. leanchecker then replays every declaration through the kernel again.
+    - uses: leanprover/lean-action@v1
+      with:
+        lake-package-directory: lean-oracle
+        build: "true"
+        build-args: "--wfail"
+        test: "false"
+        lint: "false"
+        leanchecker: "true"
+        leanchecker-args: "AccessOracle"
+
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Build the diff-test harness
+      run: cargo build --release -p accumulo-access-oracle-difftest
+
+    - name: Fetch Apache's test vectors
+      run: >-
+        curl -sSfL -o testdata.json
+        https://raw.githubusercontent.com/apache/accumulo-access/d272aa931e06d46878a340909017e530e8cae33d/modules/test-data/src/main/resources/org/apache/accumulo/access/testdata/testdata.json
+
+    - name: Apache's test vectors
+      run: $DIFFTEST upstream testdata.json
+
+    - name: Every string of up to 7 characters
+      run: $DIFFTEST exhaustive 7
+
+    - name: Every string of up to 6 characters, with control characters
+      run: $DIFFTEST exhaustive 6 "$(printf 'A"\\&()\t\177')"
+
+    # A new seed on every run; failures print the inputs, so they can be reproduced.
+    - name: Random expressions
+      run: $DIFFTEST random 1000000 ${{ github.run_id }}

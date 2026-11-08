@@ -16,7 +16,9 @@ streams inputs to the oracle and checks that the `accumulo-access` crate gives t
 | `accessEval_mono` | Holding more authorizations never loses access. |
 | `nothing_only_empty` | Without authorizations, only the empty expression grants access. |
 
-`lake build` checks these proofs.
+`lake build` checks these proofs. `AccessOracle/Axioms.lean` makes the build fail if any of
+them comes to depend on an axiom beyond Lean's standard ones, such as the ones `sorry` and
+`native_decide` introduce.
 
 ## What you have to trust
 
@@ -62,6 +64,9 @@ Apache's test vectors are in [testdata.json][testdata].
 
 The harness exits with 1 when the crate and the oracle disagree, and prints examples of each kind
 of disagreement.
+
+CI runs all of this in `.github/workflows/lean-oracle.yml`, with up to 7 characters for the
+exhaustive test and a new random seed on every run.
 
 [spec]: https://github.com/apache/accumulo-access/blob/main/SPECIFICATION.md
 [testdata]: https://github.com/apache/accumulo-access/blob/main/modules/test-data/src/main/resources/org/apache/accumulo/access/testdata/testdata.json
