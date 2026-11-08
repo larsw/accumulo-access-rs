@@ -7,15 +7,15 @@ pub struct Authorizations {
 
 impl Authorizations {
     /// Creates a new `Authorizations` instance.
-    /// 
-    /// # Arguments 
-    /// 
+    ///
+    /// # Arguments
+    ///
     /// * `authorizations`: A vector of authorizations.
-    /// 
-    /// returns: Authorizations 
-    /// 
-    /// # Examples 
-    /// 
+    ///
+    /// returns: Authorizations
+    ///
+    /// # Examples
+    ///
     /// ```
     /// use std::collections::HashSet;
     /// use accumulo_access::Authorizations;
@@ -27,15 +27,45 @@ impl Authorizations {
     /// ```
     pub fn of(authorizations: &[String]) -> Self {
         Authorizations {
-            auths: authorizations.iter().cloned().collect()
+            auths: authorizations.iter().cloned().collect(),
         }
     }
-    
+
     pub fn contains(&self, auth: &str) -> bool {
         self.auths.contains(auth)
     }
-    
+
     pub fn to_set(&self) -> HashSet<String> {
         self.auths.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_of_and_to_set() {
+        let auths = vec!["a".to_string(), "b".to_string()];
+        let authorizations = Authorizations::of(&auths);
+        let set = authorizations.to_set();
+        assert!(set.contains("a"));
+        assert!(set.contains("b"));
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn test_contains() {
+        let auths = vec!["x".to_string()];
+        let authorizations = Authorizations::of(&auths);
+        assert!(authorizations.contains("x"));
+        assert!(!authorizations.contains("y"));
+    }
+
+    #[test]
+    fn test_empty_authorizations() {
+        let auths: Vec<String> = vec![];
+        let authorizations = Authorizations::of(&auths);
+        assert_eq!(authorizations.to_set().len(), 0);
     }
 }

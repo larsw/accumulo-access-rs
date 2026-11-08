@@ -8,7 +8,8 @@ use thiserror::Error;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
-    #[allow(clippy::enum_variant_names)] AccessToken(String),
+    #[allow(clippy::enum_variant_names)]
+    AccessToken(String),
     OpenParen,
     CloseParen,
     And,
@@ -43,6 +44,8 @@ pub struct Lexer<'a> {
 #[derive(Error, Debug, PartialEq, Clone)]
 pub enum LexerError {
     UnexpectedCharacter(char, usize),
+    /// The input ended inside the quoted access token starting at the given position.
+    UnterminatedQuotedAccessToken(usize),
 }
 
 impl Display for LexerError {
@@ -51,6 +54,11 @@ impl Display for LexerError {
             LexerError::UnexpectedCharacter(c, position) => {
                 write!(f, "Unexpected character '{}' at position {}", c, position)
             }
+            LexerError::UnterminatedQuotedAccessToken(position) => write!(
+                f,
+                "Unterminated quoted access token starting at position {}",
+                position
+            ),
         }
     }
 }
@@ -82,13 +90,8 @@ impl<'a> Lexer<'a> {
     }
 }
 
-fn is_allowed_char_for_unquoted_access_token(c: char) -> bool {
-    c.is_ascii_alphanumeric()
-        || c == '_'
-        || c == '-'
-        || c == '.'
-        || c == ':'
-        || c == '/'
+pub(crate) fn is_allowed_char_for_unquoted_access_token(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':' || c == '/'
 }
 
 fn is_allowed_char_for_quoted_access_token(c: char) -> bool {
@@ -126,9 +129,7 @@ impl Iterator for Lexer<'_> {
                 //self.read_char();
                 Ok(Token::Or)
             }
-            '"' => {
-                self.handle_quoted_access_token()
-            }
+            '"' => self.handle_quoted_access_token(),
             _ if is_allowed_char_for_unquoted_access_token(c) => {
                 self.handle_unquoted_access_token(c)
             }
@@ -143,32 +144,30 @@ impl Iterator for Lexer<'_> {
 
 impl Lexer<'_> {
     fn handle_quoted_access_token(&mut self) -> Result<Token, LexerError> {
+        // The opening quote has already been read.
+        let start = self.position;
         let mut value = String::new();
-        //self.read_char(); // discard the opening quote
         while let Some(c) = self.read_char() {
-            if !is_allowed_char_for_quoted_access_token(c)
-            {
+            if !is_allowed_char_for_quoted_access_token(c) {
                 return Err(LexerError::UnexpectedCharacter(c, self.position));
             }
             match c {
-                '\\' => {
-                    if let Some(next_char) = self.read_char() {
-                        if next_char == '"' || next_char == '\\' {
-                            value.push(next_char);
-                        } else {
-                            return Err(LexerError::UnexpectedCharacter(next_char, self.position));
-                        }
+                '\\' => match self.read_char() {
+                    Some(escaped @ ('"' | '\\')) => value.push(escaped),
+                    Some(other) => {
+                        return Err(LexerError::UnexpectedCharacter(other, self.position))
                     }
+                    None => break,
+                },
+                // A quoted access token must contain at least one character.
+                '"' if value.is_empty() => {
+                    return Err(LexerError::UnexpectedCharacter(c, self.position))
                 }
-                '"' => {
-                    break;
-                }
-                _ => {
-                    value.push(c);
-                }
+                '"' => return Ok(Token::AccessToken(value)),
+                _ => value.push(c),
             }
         }
-        Ok(Token::AccessToken(value))
+        Err(LexerError::UnterminatedQuotedAccessToken(start))
     }
 
     fn handle_unquoted_access_token(&mut self, first_char: char) -> Result<Token, LexerError> {
@@ -192,8 +191,7 @@ mod tests {
 
     #[test]
     fn test_lexer_valid() {
-        let input =
-            "label1&\"label 🕺\"|(\"hello \\\\ \\\"world\"|label4|(label5&label6)))";
+        let input = "label1&\"label 🕺\"|(\"hello \\\\ \\\"world\"|label4|(label5&label6)))";
         let lexer = Lexer::new(input);
         let tokens: Vec<Result<Token, LexerError>> = lexer.collect();
         assert_eq!(
@@ -218,14 +216,14 @@ mod tests {
             ]
         );
     }
-    
+
     #[test]
     fn test_lexer_valid2() {
         let input = "\"abc!12\"&\"abc\\\\xyz\"&GHI";
-        
+
         let lexer = Lexer::new(input);
         let tokens: Vec<Result<Token, LexerError>> = lexer.collect();
-        
+
         assert_eq!(
             tokens,
             vec![
@@ -234,7 +232,8 @@ mod tests {
                 Ok(Token::AccessToken("abc\\xyz".to_string())),
                 Ok(Token::And),
                 Ok(Token::AccessToken("GHI".to_string())),
-            ]);
+            ]
+        );
     }
 
     #[test]
@@ -252,5 +251,69 @@ mod tests {
                 Err(LexerError::UnexpectedCharacter('[', 10)),
             ]
         );
+    }
+
+    #[test]
+    fn test_lexer_unicode_quoted_token() {
+        let input = "\"标签A\"";
+        let lexer = Lexer::new(input);
+        let tokens: Vec<_> = lexer.collect();
+        assert_eq!(tokens, vec![Ok(Token::AccessToken("标签A".to_string()))]);
+    }
+
+    #[test]
+    fn test_lexer_unquoted_token_with_dash_and_colon() {
+        let input = "abc-def:ghi";
+        let lexer = Lexer::new(input);
+        let tokens: Vec<_> = lexer.collect();
+        assert_eq!(
+            tokens,
+            vec![Ok(Token::AccessToken("abc-def:ghi".to_string()))]
+        );
+    }
+
+    #[test]
+    fn test_lexer_quoted_token_with_escape() {
+        let input = "\"abc\\\"def\"";
+        let lexer = Lexer::new(input);
+        let tokens: Vec<_> = lexer.collect();
+        assert_eq!(tokens, vec![Ok(Token::AccessToken("abc\"def".to_string()))]);
+    }
+
+    #[test]
+    fn test_lexer_invalid_escape_in_quoted_token() {
+        let input = "\"abc\\qdef\"";
+        let mut lexer = Lexer::new(input);
+        assert_eq!(
+            lexer.next(),
+            Some(Err(LexerError::UnexpectedCharacter('q', 6)))
+        );
+    }
+
+    #[test]
+    fn test_lexer_empty_quoted_token() {
+        let tokens: Vec<_> = Lexer::new("\"\"").collect();
+        assert_eq!(tokens, vec![Err(LexerError::UnexpectedCharacter('"', 2))]);
+    }
+
+    #[test]
+    fn test_lexer_unterminated_quoted_token() {
+        for input in ["\"", "\"abc", "\"abc\\"] {
+            let tokens: Vec<_> = Lexer::new(input).collect();
+            assert_eq!(
+                tokens,
+                vec![Err(LexerError::UnterminatedQuotedAccessToken(1))],
+                "{}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_lexer_empty_string() {
+        let input = "";
+        let lexer = Lexer::new(input);
+        let tokens: Vec<_> = lexer.collect();
+        assert!(tokens.is_empty());
     }
 }

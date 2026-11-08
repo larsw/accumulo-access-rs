@@ -20,15 +20,15 @@ use accumulo_access::check_authorization;
 
 fn main() {
     let expr = "A&B&(C|D)";
-    let auths = vec!["A", "B", "C"];
-    let result = check_authorization(expr, auths);
-    assert!(result.is_ok());
+    let auths = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+    let result = check_authorization(expr, &auths);
+    assert_eq!(result, Ok(true));
 }
 ```
 
 ## Functionality
 
-* Using the equivalent method in `caching::check_authorization` will memoize/cache the result based on the input (expression+authorization tuple).
+* Using `caching::check_authorization_csv` (enabled by the default `caching` feature) will memoize/cache the result based on the input (expression, comma-separated authorizations) pair.
 * Possibility to return parsed expression as an expression tree; either as a serde JSON Value-based tree, or a JSON string representation.
 
 ## Known usages

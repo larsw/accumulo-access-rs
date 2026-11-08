@@ -15,6 +15,18 @@ fn get_cache_size() -> usize {
     size.max(1)
 }
 
+/// Creates the cache with room for `size` entries.
+///
+/// `LruCache::new` panics when it cannot allocate `size` entries (e.g. `usize::MAX`), and a
+/// panic while the lazily created cache is initialized would poison it for every later call.
+/// Such a size falls back to the default instead.
+fn cache_with_size(size: usize) -> LruCache<String, bool> {
+    LruCache::builder()
+        .max_size(size)
+        .build()
+        .unwrap_or_else(|_| LruCache::new(DEFAULT_CACHE_SIZE))
+}
+
 /// Builds the cache key for an (expression, tokens) pair.
 ///
 /// Length-prefixed rather than concatenated: `("a", "bc")` and `("ab", "c")`
@@ -28,7 +40,7 @@ fn cache_key(expression: &str, tokens: &str) -> String {
 // value is stored, so a parse error is returned to every caller and never cached.
 #[cached(
     ty = "LruCache<String, bool>",
-    create = "{ LruCache::new(get_cache_size()) }",
+    create = "{ cache_with_size(get_cache_size()) }",
     convert = r##"{ cache_key(&expression, &tokens) }"##
 )]
 pub fn check_authorization_csv(
@@ -68,7 +80,7 @@ pub fn authz_cache_stats() -> Result<AuthzCacheStats, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::cache_key;
+    use super::{cache_key, cache_with_size, DEFAULT_CACHE_SIZE};
 
     #[test]
     fn cache_key_separates_the_expression_from_the_tokens() {
@@ -79,7 +91,16 @@ mod tests {
     }
 
     #[test]
+    fn cache_with_an_unallocatable_size_falls_back_to_the_default() {
+        assert_eq!(cache_with_size(usize::MAX).capacity(), DEFAULT_CACHE_SIZE);
+        assert_eq!(cache_with_size(10).capacity(), 10);
+    }
+
+    #[test]
     fn cache_key_is_stable_for_the_same_pair() {
-        assert_eq!(cache_key("label1&label2", "label1"), cache_key("label1&label2", "label1"));
+        assert_eq!(
+            cache_key("label1&label2", "label1"),
+            cache_key("label1&label2", "label1")
+        );
     }
 }
