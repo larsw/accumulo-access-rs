@@ -1,0 +1,10 @@
+name = "access-oracle"
+version = "0.1.0"
+defaultTargets = ["oracle"]
+
+[[lean_lib]]
+name = "AccessOracle"
+
+[[lean_exe]]
+name = "oracle"
+root = "Main"

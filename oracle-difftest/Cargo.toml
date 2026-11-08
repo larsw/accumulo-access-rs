@@ -1,0 +1,11 @@
+[package]
+name = "accumulo-access-oracle-difftest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Differential test of accumulo-access against the Lean oracle in lean-oracle/"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+accumulo-access = { path = "../accumulo-access" }
+serde_json = "1.0"
