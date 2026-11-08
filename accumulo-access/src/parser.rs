@@ -48,9 +48,21 @@ impl std::fmt::Display for ParserError {
 /// and-expression    = "&" (access-token / paren-expression) [and-expression]
 /// or-expression     = "|" (access-token / paren-expression) [or-expression]
 /// ```
+///
+/// Parentheses may nest at most 256 deep. A deeper `(` is rejected with
+/// `ParserError::UnexpectedToken(Token::OpenParen)`, so that untrusted input cannot overflow the
+/// stack of the recursive parser (or of the recursive evaluation of the parsed tree), which would
+/// abort the process rather than return an error.
 pub struct Parser<'a> {
+    /// The input from its start, for `parse` to begin from on every call.
+    input: Lexer<'a>,
     lexer: Peekable<Lexer<'a>>,
+    /// The number of `(` the parser is currently inside.
+    depth: usize,
 }
+
+/// The deepest that parentheses may nest.
+const MAX_NESTING_DEPTH: usize = 256;
 
 impl<'a> Parser<'a> {
     /// Creates a new `Parser` instance.
@@ -60,7 +72,9 @@ impl<'a> Parser<'a> {
     /// * `lexer` - The `Lexer` instance to use for tokenization.
     pub fn new(lexer: Lexer<'a>) -> Self {
         Parser {
+            input: lexer.clone(),
             lexer: lexer.peekable(),
+            depth: 0,
         }
     }
 
@@ -83,6 +97,11 @@ impl<'a> Parser<'a> {
     ///  assert_eq!(ast.evaluate(&authorized_tokens), true);
     /// ```
     pub fn parse(&mut self) -> Result<AuthorizationExpression, ParserError> {
+        // Parse from the start of the input on every call: continuing where a previous call
+        // stopped would read the empty (allow-all) expression, or the rest of a malformed one.
+        self.lexer = self.input.clone().peekable();
+        self.depth = 0;
+
         // access-expression = [expression]. The empty string is a valid access
         // expression, and it authorizes everything.
         if self.peek()?.is_none() {
@@ -142,12 +161,18 @@ impl<'a> Parser<'a> {
         match self.next_token()? {
             Some(Token::AccessToken(value)) => Ok(AuthorizationExpression::AccessToken(value)),
             Some(Token::OpenParen) => {
+                if self.depth >= MAX_NESTING_DEPTH {
+                    return Err(ParserError::UnexpectedToken(Token::OpenParen));
+                }
                 // paren-expression = "(" expression ")". Unlike the expression
                 // as a whole, a parenthesised one may not be empty.
                 if let Some(Token::CloseParen) = self.peek()? {
                     return Err(ParserError::EmptyScope);
                 }
-                let inner = self.parse_expression()?;
+                self.depth += 1;
+                let inner = self.parse_expression();
+                self.depth -= 1;
+                let inner = inner?;
                 match self.next_token()? {
                     Some(Token::CloseParen) => Ok(inner),
                     Some(token) => Err(ParserError::UnexpectedToken(token)),
@@ -304,5 +329,36 @@ mod tests {
     #[test]
     fn a_redundant_scope_collapses_to_its_content() {
         assert_eq!(Ok(token("A")), parse("(((A)))"));
+    }
+
+    #[test]
+    fn nesting_is_limited() {
+        let nested = |depth: usize| format!("{}A{}", "(".repeat(depth), ")".repeat(depth));
+        assert_eq!(Ok(token("A")), parse(&nested(MAX_NESTING_DEPTH)));
+        assert_eq!(
+            Err(ParserError::UnexpectedToken(Token::OpenParen)),
+            parse(&nested(MAX_NESTING_DEPTH + 1))
+        );
+        // Deep enough to overflow the stack without the limit.
+        assert!(parse(&"(".repeat(100_000)).is_err());
+        // Depth counts open parentheses, not all of them.
+        let siblings = format!(
+            "{}&{}",
+            nested(MAX_NESTING_DEPTH),
+            nested(MAX_NESTING_DEPTH)
+        );
+        assert!(parse(&siblings).is_ok());
+    }
+
+    #[test]
+    fn parse_starts_from_the_beginning_on_every_call() {
+        let mut parser = Parser::new(Lexer::new("SECRET"));
+        assert_eq!(Ok(token("SECRET")), parser.parse());
+        assert_eq!(Ok(token("SECRET")), parser.parse());
+
+        let mut parser = Parser::new(Lexer::new("A&&B"));
+        let first = parser.parse();
+        assert!(first.is_err());
+        assert_eq!(first, parser.parse());
     }
 }

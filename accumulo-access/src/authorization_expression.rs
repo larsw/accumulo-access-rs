@@ -1,7 +1,10 @@
 use std::cmp::Ordering;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Display, Formatter, Write};
 use std::hash::{Hash, Hasher};
+
+use crate::lexer::is_allowed_char_for_unquoted_access_token;
 
 #[derive(Debug, Clone)]
 pub enum AuthorizationExpression {
@@ -12,49 +15,31 @@ pub enum AuthorizationExpression {
     /// An access token.
     AccessToken(String),
     /// A nil expression (empty string).
-    Nil
+    Nil,
 }
 
 impl Hash for AuthorizationExpression {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        match self {
-            AuthorizationExpression::ConjunctionOf(nodes) => {
-                let mut sorted = nodes.clone();
-                sorted.sort();
-                state.write_u8(0);
-                sorted.hash(state);
-            }
-            AuthorizationExpression::DisjunctionOf(nodes) => {
-                let mut sorted = nodes.clone();
-                sorted.sort();
-                state.write_u8(1);
-                sorted.hash(state);
-            }
-            AuthorizationExpression::AccessToken(token) => {
-                state.write_u8(2);
-                token.hash(state);
-            }
-            AuthorizationExpression::Nil => {
-                state.write_u8(3);
-            }
-        }
+        state.write_u64(self.set_hash());
     }
 }
 
+/// Orders expressions structurally: `Nil` first, then `&` and `|` expressions (by their
+/// operands, then `&` before `|`), then access tokens. This is a total order that agrees with
+/// `==` on normalized expressions.
 impl Ord for AuthorizationExpression {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
-            (AuthorizationExpression::ConjunctionOf(a), AuthorizationExpression::DisjunctionOf(b)) => a.cmp(b),
-            (AuthorizationExpression::DisjunctionOf(a), AuthorizationExpression::ConjunctionOf(b)) => a.cmp(b),
-            (AuthorizationExpression::ConjunctionOf(a), AuthorizationExpression::ConjunctionOf(b)) => a.cmp(b),
-            (AuthorizationExpression::DisjunctionOf(a), AuthorizationExpression::DisjunctionOf(b)) => a.cmp(b),
-            (AuthorizationExpression::AccessToken(a), AuthorizationExpression::AccessToken(b)) => a.cmp(b),
-            (AuthorizationExpression::AccessToken(_), _) => Ordering::Greater,
-            (AuthorizationExpression::ConjunctionOf(_), AuthorizationExpression::AccessToken(_)) => Ordering::Less,
-            (AuthorizationExpression::DisjunctionOf(_), AuthorizationExpression::AccessToken(_)) => Ordering::Less,
-            (_, AuthorizationExpression::AccessToken(_)) => Ordering::Less,
-            (_, AuthorizationExpression::Nil) => Ordering::Equal,
-            (AuthorizationExpression::Nil, _) => Ordering::Equal
+            (AuthorizationExpression::AccessToken(a), AuthorizationExpression::AccessToken(b)) => {
+                a.cmp(b)
+            }
+            (
+                AuthorizationExpression::ConjunctionOf(a)
+                | AuthorizationExpression::DisjunctionOf(a),
+                AuthorizationExpression::ConjunctionOf(b)
+                | AuthorizationExpression::DisjunctionOf(b),
+            ) => a.cmp(b).then_with(|| self.rank().cmp(&other.rank())),
+            _ => self.rank().cmp(&other.rank()),
         }
     }
 }
@@ -70,38 +55,68 @@ impl Eq for AuthorizationExpression {}
 impl PartialEq for AuthorizationExpression {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (AuthorizationExpression::ConjunctionOf(a), AuthorizationExpression::ConjunctionOf(b)) => {
+            (
+                AuthorizationExpression::ConjunctionOf(a),
+                AuthorizationExpression::ConjunctionOf(b),
+            ) => {
                 let self_set: HashSet<_> = a.iter().collect();
                 let other_set: HashSet<_> = b.iter().collect();
                 self_set == other_set
-            },
-            (AuthorizationExpression::DisjunctionOf(a), AuthorizationExpression::DisjunctionOf(b)) => {
+            }
+            (
+                AuthorizationExpression::DisjunctionOf(a),
+                AuthorizationExpression::DisjunctionOf(b),
+            ) => {
                 let self_set: HashSet<_> = a.iter().collect();
                 let other_set: HashSet<_> = b.iter().collect();
                 self_set == other_set
-            },
-            (AuthorizationExpression::AccessToken(a), AuthorizationExpression::AccessToken(b)) => a == b,
+            }
+            (AuthorizationExpression::AccessToken(a), AuthorizationExpression::AccessToken(b)) => {
+                a == b
+            }
             (AuthorizationExpression::Nil, AuthorizationExpression::Nil) => true,
             _ => false,
         }
     }
 }
 
+/// Writes the expression in the access expression syntax, parenthesizing nested `&` and `|`
+/// expressions and quoting access tokens that cannot appear unquoted.
 impl Display for AuthorizationExpression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.to_expression_str().as_str())
+        match self {
+            AuthorizationExpression::Nil => Ok(()),
+            AuthorizationExpression::ConjunctionOf(nodes) => Self::fmt_nodes(nodes, '&', f),
+            AuthorizationExpression::DisjunctionOf(nodes) => Self::fmt_nodes(nodes, '|', f),
+            AuthorizationExpression::AccessToken(token)
+                if !token.is_empty()
+                    && token.chars().all(is_allowed_char_for_unquoted_access_token) =>
+            {
+                f.write_str(token)
+            }
+            AuthorizationExpression::AccessToken(token) => {
+                f.write_char('"')?;
+                for c in token.chars() {
+                    if c == '"' || c == '\\' {
+                        f.write_char('\\')?;
+                    }
+                    f.write_char(c)?;
+                }
+                f.write_char('"')
+            }
+        }
     }
 }
 
 impl AuthorizationExpression {
     /// Create a new `AuthorizationExpression` from a JSON value.
-    /// 
+    ///
     /// # Arguments
     /// json - The JSON value to parse.
-    /// 
+    ///
     /// # Returns
     /// A new `AuthorizationExpression` instance.
-    /// 
+    ///
     /// # Example
     /// ```
     /// use accumulo_access::AuthorizationExpression;
@@ -120,36 +135,45 @@ impl AuthorizationExpression {
     /// ```
     pub fn from_json(json: &serde_json::Value) -> Result<Self, String> {
         match json {
-            serde_json::Value::Object(obj) => {
-                if obj.contains_key("and") {
-                    let and = obj.get("and").unwrap().as_array().unwrap();
-                    let mut nodes = Vec::new();
-                    for node in and {
-                        nodes.push(AuthorizationExpression::from_json(node)?);
-                    }
-                    Ok(AuthorizationExpression::ConjunctionOf(nodes))
-                } else if obj.contains_key("or") {
-                    let or = obj.get("or").unwrap().as_array().unwrap();
-                    let mut nodes = Vec::new();
-                    for node in or {
-                        nodes.push(AuthorizationExpression::from_json(node)?);
-                    }
-                    Ok(AuthorizationExpression::DisjunctionOf(nodes))
-                } else {
-                    Err("Invalid JSON object".to_string())
-                }
+            // `to_json` represents the empty expression as `null`.
+            serde_json::Value::Null => Ok(AuthorizationExpression::Nil),
+            _ => Self::node_from_json(json),
+        }
+    }
+
+    /// Like `from_json`, but only accepts what can appear inside an expression: an object with
+    /// a single "and" or "or" key, or a non-empty access token.
+    fn node_from_json(json: &serde_json::Value) -> Result<Self, String> {
+        match json {
+            serde_json::Value::Object(obj) => match (obj.len(), obj.get("and"), obj.get("or")) {
+                (1, Some(nodes), _) => Ok(AuthorizationExpression::ConjunctionOf(
+                    Self::nodes_from_json(nodes)?,
+                )),
+                (1, _, Some(nodes)) => Ok(AuthorizationExpression::DisjunctionOf(
+                    Self::nodes_from_json(nodes)?,
+                )),
+                _ => Err("Invalid JSON object".to_string()),
+            },
+            serde_json::Value::String(token) if !token.is_empty() => {
+                Ok(AuthorizationExpression::AccessToken(token.to_string()))
             }
-            serde_json::Value::String(token) => Ok(AuthorizationExpression::AccessToken(token.to_string())),
             _ => Err("Invalid JSON value".to_string()),
+        }
+    }
+
+    fn nodes_from_json(json: &serde_json::Value) -> Result<Vec<Self>, String> {
+        match json.as_array() {
+            Some(nodes) if !nodes.is_empty() => nodes.iter().map(Self::node_from_json).collect(),
+            _ => Err("Invalid JSON object: the operands must be a non-empty array".to_string()),
         }
     }
 
     /// Evaluate the expression with the given set of authorizations.
     /// Returns `true` if the authorizations are valid, `false` otherwise.
-    /// 
+    ///
     /// # Arguments
     /// authorizations - The set of authorizations to check.
-    /// 
+    ///
     /// # Example
     /// ```
     /// use std::collections::HashSet;
@@ -171,22 +195,23 @@ impl AuthorizationExpression {
         match self {
             AuthorizationExpression::Nil => true,
 
-            AuthorizationExpression::ConjunctionOf(nodes) =>
-                nodes.iter().all(|node| node.evaluate(authorizations)),
+            AuthorizationExpression::ConjunctionOf(nodes) => {
+                nodes.iter().all(|node| node.evaluate(authorizations))
+            }
 
-            AuthorizationExpression::DisjunctionOf(nodes) =>
-                nodes.iter().any(|node| node.evaluate(authorizations)),
+            AuthorizationExpression::DisjunctionOf(nodes) => {
+                nodes.iter().any(|node| node.evaluate(authorizations))
+            }
 
             AuthorizationExpression::AccessToken(token) => authorizations.contains(token),
         }
     }
 
-
     /// Create a JSON representation of the expression tree.
-    /// 
+    ///
     /// # Returns
     /// A JSON value representing the expression tree.
-    /// 
+    ///
     /// # Example
     /// ```
     /// use accumulo_access::AuthorizationExpression;
@@ -220,10 +245,10 @@ impl AuthorizationExpression {
     }
 
     /// Create a JSON string representation of the expression tree.
-    /// 
+    ///
     /// # Returns
     /// A JSON string representing the expression tree.
-    /// 
+    ///
     /// # Example
     /// ```
     /// use accumulo_access::AuthorizationExpression;
@@ -231,7 +256,7 @@ impl AuthorizationExpression {
     ///  AuthorizationExpression::AccessToken("A".to_string()),
     ///  AuthorizationExpression::AccessToken("B".to_string()),
     /// ]);
-    /// 
+    ///
     /// let json_str = expr.to_json_str();
     /// assert_eq!(json_str, "{\"and\":[\"A\",\"B\"]}");
     pub fn to_json_str(&self) -> String {
@@ -239,10 +264,10 @@ impl AuthorizationExpression {
     }
 
     /// Create a string representation of the expression tree.
-    /// 
+    ///
     /// # Returns
     /// A string representing the expression tree.
-    /// 
+    ///
     /// # Example
     /// ```
     /// use accumulo_access::AuthorizationExpression;
@@ -250,9 +275,9 @@ impl AuthorizationExpression {
     /// AuthorizationExpression::AccessToken("A".to_string()),
     /// AuthorizationExpression::AccessToken("B".to_string()),
     /// ]);
-    /// 
+    ///
     /// let expr_str = expr1.to_expression_str();
-    /// assert_eq!(expr_str, "A&B");    ///
+    /// assert_eq!(expr_str, "A&B");
     ///
     /// let expr2 = AuthorizationExpression::DisjunctionOf(vec![
     /// AuthorizationExpression::AccessToken("A".to_string()),
@@ -262,33 +287,11 @@ impl AuthorizationExpression {
     /// let expr_str = expr2.to_expression_str();
     /// assert_eq!(expr_str, "A|B");
     pub fn to_expression_str(&self) -> String {
-        // serialize the expression tree back as a valid Accumulo Security Expression including parentheses, optional quotes, '&' and '|'.
-        match self {
-            AuthorizationExpression::Nil => String::new(),
-            AuthorizationExpression::ConjunctionOf(nodes) => {
-                let mut expression = String::new();
-                for node in nodes {
-                    expression.push_str(&node.to_expression_str());
-                    expression.push('&');
-                }
-                expression.pop();
-                expression
-            }
-            AuthorizationExpression::DisjunctionOf(nodes) => {
-                let mut expression = String::new();
-                for node in nodes {
-                    expression.push_str(&node.to_expression_str());
-                    expression.push('|');
-                }
-                expression.pop();
-                expression
-            }
-            AuthorizationExpression::AccessToken(token) => token.clone(),
-        }
+        self.to_string()
     }
 
     /// Normalize the expression tree by sorting and deduplicating the nodes.
-    /// 
+    ///
     /// # Example
     /// ```
     /// use accumulo_access::AuthorizationExpression;
@@ -309,27 +312,68 @@ impl AuthorizationExpression {
     /// AuthorizationExpression::AccessToken("C".to_string()),
     /// AuthorizationExpression::AccessToken("D".to_string())]
     /// )]);
-    /// 
+    ///
     /// assert_eq!(expr, expected);
+    /// // `==` ignores order and duplicates; the normalized form is sorted and deduplicated.
+    /// assert_eq!(expr.to_string(), "(C|D)&A&B");
     pub fn normalize(&mut self) {
-        match self {
-            AuthorizationExpression::Nil => {},
+        if let AuthorizationExpression::ConjunctionOf(nodes)
+        | AuthorizationExpression::DisjunctionOf(nodes) = self
+        {
+            // Normalize the operands first, so that equal operands become identical and end up
+            // next to each other when sorted.
+            for node in nodes.iter_mut() {
+                node.normalize();
+            }
+            nodes.sort();
+            nodes.dedup();
+        }
+    }
 
-            AuthorizationExpression::ConjunctionOf(nodes) => {
-                nodes.sort();
-                nodes.dedup();
-                for node in nodes {
-                    node.normalize();
-                }
+    /// Hashes the expression the way `PartialEq` compares it: ignoring the order and duplicates
+    /// of the operands of `&` and `|`.
+    fn set_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        hasher.write_u8(self.rank());
+        match self {
+            AuthorizationExpression::ConjunctionOf(nodes)
+            | AuthorizationExpression::DisjunctionOf(nodes) => {
+                let mut hashes: Vec<u64> = nodes.iter().map(Self::set_hash).collect();
+                hashes.sort_unstable();
+                hashes.dedup();
+                hashes.hash(&mut hasher);
             }
-            AuthorizationExpression::DisjunctionOf(nodes) => {
-                nodes.sort();
-                nodes.dedup();
-                for node in nodes {
-                    node.normalize();
-                }
+            AuthorizationExpression::AccessToken(token) => token.hash(&mut hasher),
+            AuthorizationExpression::Nil => {}
+        }
+        hasher.finish()
+    }
+
+    fn fmt_nodes(
+        nodes: &[AuthorizationExpression],
+        operator: char,
+        f: &mut Formatter<'_>,
+    ) -> std::fmt::Result {
+        for (i, node) in nodes.iter().enumerate() {
+            if i > 0 {
+                f.write_char(operator)?;
             }
-            AuthorizationExpression::AccessToken(_) => {}
+            match node {
+                AuthorizationExpression::ConjunctionOf(_)
+                | AuthorizationExpression::DisjunctionOf(_) => write!(f, "({})", node)?,
+                _ => write!(f, "{}", node)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// The position of the variant in the `Ord` order.
+    fn rank(&self) -> u8 {
+        match self {
+            AuthorizationExpression::Nil => 0,
+            AuthorizationExpression::ConjunctionOf(_) => 1,
+            AuthorizationExpression::DisjunctionOf(_) => 2,
+            AuthorizationExpression::AccessToken(_) => 3,
         }
     }
 }
@@ -338,27 +382,50 @@ impl AuthorizationExpression {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Lexer, Parser};
+
+    fn parse(input: &str) -> AuthorizationExpression {
+        Parser::new(Lexer::new(input)).parse().unwrap()
+    }
+
+    fn hash(expr: &AuthorizationExpression) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        expr.hash(&mut hasher);
+        hasher.finish()
+    }
 
     #[test]
     fn some_basic_equality_and_ordering_tests() {
-        assert_eq!(AuthorizationExpression::AccessToken("A".to_string()), AuthorizationExpression::AccessToken("A".to_string()));
-        assert_ne!(AuthorizationExpression::AccessToken("A".to_string()), AuthorizationExpression::AccessToken("B".to_string()));
+        assert_eq!(
+            AuthorizationExpression::AccessToken("A".to_string()),
+            AuthorizationExpression::AccessToken("A".to_string())
+        );
+        assert_ne!(
+            AuthorizationExpression::AccessToken("A".to_string()),
+            AuthorizationExpression::AccessToken("B".to_string())
+        );
 
-        assert_eq!(AuthorizationExpression::ConjunctionOf(vec![
-            AuthorizationExpression::AccessToken("A".to_string()),
-            AuthorizationExpression::AccessToken("B".to_string()),
-        ]), AuthorizationExpression::ConjunctionOf(vec![
-            AuthorizationExpression::AccessToken("B".to_string()),
-            AuthorizationExpression::AccessToken("A".to_string()),
-        ]));
+        assert_eq!(
+            AuthorizationExpression::ConjunctionOf(vec![
+                AuthorizationExpression::AccessToken("A".to_string()),
+                AuthorizationExpression::AccessToken("B".to_string()),
+            ]),
+            AuthorizationExpression::ConjunctionOf(vec![
+                AuthorizationExpression::AccessToken("B".to_string()),
+                AuthorizationExpression::AccessToken("A".to_string()),
+            ])
+        );
 
-        assert_eq!(AuthorizationExpression::DisjunctionOf(vec![
-            AuthorizationExpression::AccessToken("A".to_string()),
-            AuthorizationExpression::AccessToken("B".to_string()),
-        ]), AuthorizationExpression::DisjunctionOf(vec![
-            AuthorizationExpression::AccessToken("B".to_string()),
-            AuthorizationExpression::AccessToken("A".to_string()),
-        ]));
+        assert_eq!(
+            AuthorizationExpression::DisjunctionOf(vec![
+                AuthorizationExpression::AccessToken("A".to_string()),
+                AuthorizationExpression::AccessToken("B".to_string()),
+            ]),
+            AuthorizationExpression::DisjunctionOf(vec![
+                AuthorizationExpression::AccessToken("B".to_string()),
+                AuthorizationExpression::AccessToken("A".to_string()),
+            ])
+        );
     }
 
     #[test]
@@ -375,13 +442,16 @@ mod tests {
             ]
         });
         let expr = AuthorizationExpression::from_json(&json).unwrap();
-        assert_eq!(expr, AuthorizationExpression::ConjunctionOf(vec![
-            AuthorizationExpression::AccessToken("A".to_string()),
-            AuthorizationExpression::DisjunctionOf(vec![
-                AuthorizationExpression::AccessToken("B".to_string()),
-                AuthorizationExpression::AccessToken("C".to_string()),
-            ]),
-        ]));
+        assert_eq!(
+            expr,
+            AuthorizationExpression::ConjunctionOf(vec![
+                AuthorizationExpression::AccessToken("A".to_string()),
+                AuthorizationExpression::DisjunctionOf(vec![
+                    AuthorizationExpression::AccessToken("B".to_string()),
+                    AuthorizationExpression::AccessToken("C".to_string()),
+                ]),
+            ])
+        );
     }
 
     #[test]
@@ -403,13 +473,139 @@ mod tests {
 
         expr.normalize();
 
-        assert_eq!(expr, AuthorizationExpression::ConjunctionOf(vec![
+        assert_eq!(
+            expr,
+            AuthorizationExpression::ConjunctionOf(vec![
+                AuthorizationExpression::AccessToken("B".to_string()),
+                AuthorizationExpression::AccessToken("A".to_string()),
+                AuthorizationExpression::DisjunctionOf(vec![
+                    AuthorizationExpression::AccessToken("D".to_string()),
+                    AuthorizationExpression::AccessToken("C".to_string()),
+                ]),
+            ])
+        );
+        // `==` ignores order and duplicates, so also check the exact normalized form.
+        assert_eq!(expr.to_string(), "(C|D)&A&B");
+    }
+
+    #[test]
+    fn test_nil_evaluates_true() {
+        let expr = AuthorizationExpression::Nil;
+        let set = std::collections::HashSet::new();
+        assert!(expr.evaluate(&set));
+    }
+
+    #[test]
+    fn test_access_token_evaluates_false() {
+        let expr = AuthorizationExpression::AccessToken("X".to_string());
+        let set = std::collections::HashSet::from(["Y".to_string()]);
+        assert!(!expr.evaluate(&set));
+    }
+
+    #[test]
+    fn test_disjunction_evaluates_false() {
+        let expr = AuthorizationExpression::DisjunctionOf(vec![
+            AuthorizationExpression::AccessToken("A".to_string()),
             AuthorizationExpression::AccessToken("B".to_string()),
+        ]);
+        let set = std::collections::HashSet::from(["C".to_string()]);
+        assert!(!expr.evaluate(&set));
+    }
+
+    #[test]
+    fn test_json_roundtrip() {
+        let expr = AuthorizationExpression::ConjunctionOf(vec![
             AuthorizationExpression::AccessToken("A".to_string()),
             AuthorizationExpression::DisjunctionOf(vec![
-                AuthorizationExpression::AccessToken("D".to_string()),
+                AuthorizationExpression::AccessToken("B".to_string()),
                 AuthorizationExpression::AccessToken("C".to_string()),
             ]),
-        ]));
+        ]);
+        let json = expr.to_json();
+        let expr2 = AuthorizationExpression::from_json(&json).unwrap();
+        assert_eq!(expr, expr2);
+    }
+
+    #[test]
+    fn test_to_expression_str_and_display() {
+        let expr = AuthorizationExpression::ConjunctionOf(vec![
+            AuthorizationExpression::AccessToken("A".to_string()),
+            AuthorizationExpression::AccessToken("B".to_string()),
+        ]);
+        assert_eq!(expr.to_expression_str(), "A&B");
+        assert_eq!(format!("{}", expr), "A&B");
+    }
+
+    #[test]
+    fn test_to_json_str() {
+        let expr = AuthorizationExpression::AccessToken("A".to_string());
+        let json_str = expr.to_json_str();
+        assert_eq!(json_str, "\"A\"");
+    }
+
+    #[test]
+    fn test_to_expression_str_round_trips() {
+        for input in [
+            "A&(B|C)",
+            "(A|B)&(C|D)",
+            "\"a b\"&\"x\\\"y\\\\z\"",
+            "\"a|b\"",
+        ] {
+            let expr = parse(input);
+            assert_eq!(parse(&expr.to_expression_str()), expr, "{}", input);
+        }
+        assert_eq!(parse("\"a|b\"").to_expression_str(), "\"a|b\"");
+    }
+
+    #[test]
+    fn test_from_json_rejects_what_expressions_cannot_express() {
+        for json in [
+            serde_json::json!({"and": "A"}),
+            serde_json::json!({"or": 5}),
+            serde_json::json!({"and": []}),
+            serde_json::json!({"and": ["A"], "or": ["B"]}),
+            serde_json::json!({"or": ["A", null]}),
+            serde_json::json!(""),
+        ] {
+            assert!(
+                AuthorizationExpression::from_json(&json).is_err(),
+                "{}",
+                json
+            );
+        }
+    }
+
+    #[test]
+    fn test_nil_json_roundtrip() {
+        let json = AuthorizationExpression::Nil.to_json();
+        assert_eq!(
+            AuthorizationExpression::from_json(&json),
+            Ok(AuthorizationExpression::Nil)
+        );
+    }
+
+    #[test]
+    fn test_normalize_dedups_equal_operands_in_any_order() {
+        let mut expr = parse("(A|C)&(A|B)&(C|A)");
+        expr.normalize();
+        match &expr {
+            AuthorizationExpression::ConjunctionOf(nodes) => assert_eq!(nodes.len(), 2),
+            _ => panic!("unexpected {:?}", expr),
+        }
+        assert_eq!(expr, parse("(A|B)&(A|C)"));
+    }
+
+    #[test]
+    fn test_hash_and_ord_are_consistent_with_eq() {
+        let a = parse("(X|X|Y)&Z");
+        let b = parse("(Y|X)&Z");
+        assert_eq!(a, b);
+        assert_eq!(hash(&a), hash(&b));
+
+        let and = parse("A&B");
+        let or = parse("A|B");
+        assert_ne!(and, or);
+        assert_ne!(and.cmp(&or), Ordering::Equal);
+        assert_eq!(AuthorizationExpression::Nil.cmp(&and), Ordering::Less);
     }
 }

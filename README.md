@@ -34,7 +34,7 @@ returns `Err` for input the [specification][spec] calls improper (`A&`, `&A`, `A
 
 ## Limitations
 
-* It doesn't have functionality for normalizing expressions (ref. the Java-based accumulo-access project).
+* `AuthorizationExpression::normalize` sorts operands and removes duplicates, but it doesn't flatten nested groups that use the same operator: `A&(B&C)` stays nested instead of becoming `A&B&C`.
 
 ## Known usages
 
